@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "build": {
+    "Run": {
+      "Branch": "5.8.0-custom",
+      "UpstreamUrl": "https://github.com/EpicGames/UnrealEngine.git",
+      "UpstreamRemote": "",
+      "UpstreamBranch": "release"
+    },
+    "Distribution": {
+      "DistributionType": "Developer"
+    },
+    "Version": {
+      "EngineVersion": "5.8",
+      "BuildNumber": "AUTO",
+      "BuildLabel": "Dev"
+    },
+    "Paths": {
+      "OutputDirectory": "LocalBuilds\\Engine",
+      "LogDirectory": "LocalBuilds\\Logs",
+      "BuildConfigSource": "BuildConfiguration.xml",
+      "BuildConfigTarget": "Engine\\Saved\\UnrealBuildTool"
+    },
+    "Build": {
+      "TargetPlatform": "Win64",
+      "GameConfigurations": "Shipping;Development",
+      "HostPlatformEditorOnly": "false",
+      "WithDDC": "true",
+      "WithClient": "false",
+      "WithServer": "false"
+    },
+    "PostBuild": {
+      "WaitTimeout": "10"
+    },
+    "Logging": {
+      "Verbose": "true",
+      "LogRetentionDays": "30"
+    }
+  },
+  "runOptions": {
+    "builtDirectory": "",
+    "at": "02:00",
+    "skipSetup": false,
+    "skipGenerateProjectFiles": true,
+    "skipUpstreamSync": true,
+    "skipPushOrigin": false,
+    "noDdc": true,
+    "allowMergeCommit": false
+  },
+  "deploy": {
+    "targets": [
+      {
+        "id": "smb",
+        "badge": "SMB",
+        "kind": "SMB share · team-wide",
+        "name": "UE6 Team Share",
+        "path": "D:\\UnrealProject\\Projects\\Vercion_Dev",
+        "real": true
+      },
+      {
+        "id": "p4",
+        "badge": "P4",
+        "kind": "Perforce depot · stub",
+        "name": "//depot/UE6/InstalledBuild",
+        "path": "",
+        "real": false
+      }
+    ]
+  },
+  "alerts": {
+    "channels": [
+      {
+        "id": "slack",
+        "badge": "SL",
+        "name": "Slack #ue6-builds",
+        "target": "",
+        "on": false
+      },
+      {
+        "id": "email",
+        "badge": "@",
+        "name": "Email",
+        "target": "",
+        "on": false
+      },
+      {
+        "id": "toast",
+        "badge": "WN",
+        "name": "Windows Toast",
+        "target": "x",
+        "on": true
+      }
+    ],
+    "thresholds": {
+      "diskFreePct": 15,
+      "upstreamCommits": 50,
+      "buildHours": 6
+    }
+  }
+}

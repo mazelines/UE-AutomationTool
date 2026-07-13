@@ -1,0 +1,23 @@
+{
+  "name": "ue6-automation-monitor",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node server/index.js --dev",
+    "server": "node server/index.js",
+    "ui": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "prod": "vite build && node server/index.js"
+  },
+  "dependencies": {
+    "@fontsource/geist-sans": "^5.2.5",
+    "@fontsource/jetbrains-mono": "^5.2.8",
+    "@vitejs/plugin-react": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "typescript": "latest",
+    "vite": "latest"
+  }
+}
