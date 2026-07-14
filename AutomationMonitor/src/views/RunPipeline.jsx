@@ -66,6 +66,32 @@ const BUILD_TARGETS = [
   { section: "Logging", key: "Verbose", label: "Verbose Log" }
 ];
 
+// Dropdown option sets. BuildLabel mirrors DistributionType; TargetPlatform is UE's
+// platform enum (this pipeline builds Win64); GameConfigurations are common semicolon
+// combos of UnrealTargetConfiguration. The current value is preserved even if off-list.
+const BUILD_LABELS = ["Developer", "Artist"];
+const TARGET_PLATFORMS = ["Win64", "Linux", "LinuxArm64", "Mac", "Android", "IOS", "TVOS"];
+const GAME_CONFIG_PRESETS = [
+  "Development",
+  "Development;Shipping",
+  "DebugGame;Development;Shipping",
+  "Debug;DebugGame;Development;Shipping;Test",
+  "Shipping",
+  "Test"
+];
+
+// Options for an enum <select>: placeholder when unset, plus the current value kept
+// selectable even if it isn't one of the presets.
+function enumOptions(list, current) {
+  return (
+    <>
+      {!current && <option value="">— 선택 —</option>}
+      {current && !list.includes(current) && <option value={current}>{current}</option>}
+      {list.map((value) => <option key={value} value={value}>{value}</option>)}
+    </>
+  );
+}
+
 export default function RunPipelineView({ status, installConfig, setInstallConfig, upstreamBranches = [], options, setOptions, busy, isRunning, actions }) {
   const [tab, setTab] = useState("options");
   const branches = status?.branches || [];
@@ -166,14 +192,20 @@ export default function RunPipelineView({ status, installConfig, setInstallConfi
                 <input placeholder="AUTO" value={installValue("Version", "BuildNumber")} onChange={(event) => patchInstall("Version", "BuildNumber", event.target.value)} />
               </Field>
               <Field label="Build Label">
-                <input value={installValue("Version", "BuildLabel")} onChange={(event) => patchInstall("Version", "BuildLabel", event.target.value)} />
+                <select value={installValue("Version", "BuildLabel")} onChange={(event) => patchInstall("Version", "BuildLabel", event.target.value)}>
+                  {enumOptions(BUILD_LABELS, installValue("Version", "BuildLabel"))}
+                </select>
               </Field>
               <Field label="Target Platform">
-                <input value={installValue("Build", "TargetPlatform")} onChange={(event) => patchInstall("Build", "TargetPlatform", event.target.value)} />
+                <select value={installValue("Build", "TargetPlatform")} onChange={(event) => patchInstall("Build", "TargetPlatform", event.target.value)}>
+                  {enumOptions(TARGET_PLATFORMS, installValue("Build", "TargetPlatform"))}
+                </select>
               </Field>
               <label className="field span2">
                 <span>Game Configurations</span>
-                <input value={installValue("Build", "GameConfigurations")} onChange={(event) => patchInstall("Build", "GameConfigurations", event.target.value)} />
+                <select value={installValue("Build", "GameConfigurations")} onChange={(event) => patchInstall("Build", "GameConfigurations", event.target.value)}>
+                  {enumOptions(GAME_CONFIG_PRESETS, installValue("Build", "GameConfigurations"))}
+                </select>
               </label>
             </div>
 
