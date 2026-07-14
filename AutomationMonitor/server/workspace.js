@@ -2,7 +2,8 @@ import fs from "node:fs/promises";
 import fssync from "node:fs";
 import path from "node:path";
 
-// Single source of truth for every monitor/build setting, committed to git.
+// Single source of truth for every monitor/build setting for one selected repo, stored at
+// <repo>/LocalBuilds/AutomationMonitor/workspace.json (see index.js activateRepo).
 // Pure machine state (alert acks, deploy history) stays in monitor-state.json.
 
 export const DEFAULT_RUN_OPTIONS = {

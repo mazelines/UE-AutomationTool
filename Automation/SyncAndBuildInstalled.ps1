@@ -22,9 +22,13 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+$scriptDirectory = Split-Path -Parent $PSCommandPath
+
+# This script now ships separately from the UE clone it builds (previously $scriptDirectory\..
+# WAS the clone); the target repo must be passed explicitly, normally by AutomationMonitor
+# via the currently selected/active repo (see server/repos.js).
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
-    $scriptDirectory = Split-Path -Parent $PSCommandPath
-    $RepoRoot = (Resolve-Path (Join-Path $scriptDirectory '..')).Path
+    throw "-RepoRoot is required (the UE clone to sync/build) — it is no longer inferred from this script's location."
 }
 
 function Invoke-LoggedStep {
@@ -71,9 +75,10 @@ if ([string]::IsNullOrWhiteSpace($InstallConfig)) {
     $InstallConfig = Join-Path $RepoRoot 'install_build_config.ini'
 }
 
-# Settings live in AutomationMonitor/workspace.json (build section, flat "Section.Key" map);
-# the legacy install_build_config.ini path is kept as a fallback for old branches.
-$workspacePath = Join-Path $RepoRoot 'AutomationMonitor\workspace.json'
+# Settings live in <repo>/LocalBuilds/AutomationMonitor/workspace.json (build section, flat
+# "Section.Key" map, written by the Node server per selected repo); the legacy
+# install_build_config.ini path is kept as a fallback for old branches.
+$workspacePath = Join-Path $RepoRoot 'LocalBuilds\AutomationMonitor\workspace.json'
 $config = @{}
 if (Test-Path $workspacePath) {
     $workspaceJson = Get-Content $workspacePath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -253,7 +258,11 @@ try {
         }
     }
 
-    $preBuild = Join-Path $RepoRoot 'Automation\InstallBuild\_prebuild.bat'
+    # _prebuild.bat/_postbuild.bat ship with this script (Automation/InstallBuild), not with
+    # the target repo — resolve them relative to $scriptDirectory, and hand the target repo
+    # to them via REPO_ROOT since they can no longer infer it from their own location either.
+    $env:REPO_ROOT = $RepoRoot
+    $preBuild = Join-Path $scriptDirectory 'InstallBuild\_prebuild.bat'
     if (Test-Path $preBuild) {
         Invoke-LoggedStep 'Install build pre-processing' {
             & cmd.exe /d /s /c "`"$preBuild`" < NUL"
@@ -295,7 +304,7 @@ try {
         $script:buildExitCode = $LASTEXITCODE
     }
 
-    $postBuild = Join-Path $RepoRoot 'Automation\InstallBuild\_postbuild.bat'
+    $postBuild = Join-Path $scriptDirectory 'InstallBuild\_postbuild.bat'
     if (Test-Path $postBuild) {
         Invoke-LoggedStep 'Install build post-processing' {
             $buildNumber = $config['Version.BuildNumber']

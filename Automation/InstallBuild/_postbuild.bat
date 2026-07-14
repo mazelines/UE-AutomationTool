@@ -8,10 +8,16 @@ setlocal enabledelayedexpansion
 
 REM 스크립트 경로 설정
 set "SCRIPT_DIR=%~dp0"
-set "ROOT_DIR=%SCRIPT_DIR%..\..\"
-pushd "%ROOT_DIR%"
-set "ROOT_DIR=%CD%"
-popd
+if not "%REPO_ROOT%"=="" (
+    set "ROOT_DIR=%REPO_ROOT%"
+) else (
+    REM ponytail: fallback for running this bat standalone outside AutomationMonitor, which
+    REM always sets REPO_ROOT to the selected UE clone before invoking this script.
+    set "ROOT_DIR=%SCRIPT_DIR%..\..\"
+    pushd "%ROOT_DIR%"
+    set "ROOT_DIR=%CD%"
+    popd
+)
 
 echo.
 echo ============================================================

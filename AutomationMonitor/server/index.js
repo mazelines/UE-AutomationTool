@@ -10,19 +10,30 @@ import { computeAlerts } from "./alerts.js";
 import { createStore } from "./store.js";
 import { createDeployManager } from "./deploy.js";
 import { createWorkspace, DEFAULT_RUN_OPTIONS } from "./workspace.js";
+import { createRepoRegistry } from "./repos.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(__dirname, "..");
-const repoRoot = path.resolve(appRoot, "..");
-const automationRoot = path.join(repoRoot, "Automation");
-const logRoot = path.join(repoRoot, "LocalBuilds", "AutomationLogs");
-const monitorLogRoot = path.join(repoRoot, "LocalBuilds", "AutomationMonitor");
+const toolRoot = path.resolve(appRoot, "..");
+// SyncAndBuildInstalled.ps1 and its InstallBuild bat hooks ship with the tool itself,
+// not with whichever UE clone is selected as the build target.
+const automationRoot = path.join(toolRoot, "Automation");
 const distRoot = path.join(appRoot, "dist");
-const installConfigPath = path.join(repoRoot, "install_build_config.ini");
 const taskName = "UE6 Nightly Upstream Sync And Installed Build";
 const port = Number(process.env.UE6_MONITOR_PORT || 4174);
 const host = process.env.UE6_MONITOR_HOST || "0.0.0.0";
 const isDev = process.argv.includes("--dev");
+
+// The target UE clone is chosen at runtime from the registry below (repos.json) —
+// the monitor used to live inside that clone; now it runs from its own directory.
+const repoRegistry = createRepoRegistry(path.join(appRoot, "repos.json"));
+let repoRoot = null;
+let logRoot = null;
+let monitorLogRoot = null;
+let installConfigPath = null;
+let workspace = null;
+let stateStore = null;
+let deployManager = null;
 
 let activeRun = null;
 
@@ -44,6 +55,7 @@ function sendJson(res, status, data) {
 }
 
 async function appendMonitorLog(message) {
+  if (!monitorLogRoot) return;
   await fs.mkdir(monitorLogRoot, { recursive: true });
   const line = `[${new Date().toISOString()}] ${message}\n`;
   await fs.appendFile(path.join(monitorLogRoot, "monitor.log"), line, "utf8");
@@ -64,7 +76,7 @@ async function readBody(req) {
 function runPowerShell(args, options = {}) {
   return new Promise((resolve) => {
     const child = spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", ...args], {
-      cwd: repoRoot,
+      cwd: repoRoot || toolRoot,
       windowsHide: true,
       ...options
     });
@@ -82,7 +94,10 @@ function boolArg(enabled, name) {
 }
 
 // git.exe direct spawn — a powershell.exe wrapper per git call costs seconds when UBA saturates the CPU.
+// No cwd fallback here (unlike runPowerShell): running git with no active repo must return
+// nothing rather than silently report the tool's own repo state.
 function runGit(args) {
+  if (!repoRoot) return Promise.resolve("");
   return new Promise((resolve) => {
     const child = spawn("git", args, { cwd: repoRoot, windowsHide: true });
     let stdout = "";
@@ -94,6 +109,7 @@ function runGit(args) {
 
 // Like runGit but surfaces exit code + stderr — used by write operations (remote add, fetch) that must report failure.
 function runGitChecked(args) {
+  if (!repoRoot) return Promise.resolve({ code: -1, stdout: "", stderr: "저장소가 선택되지 않았습니다." });
   return new Promise((resolve) => {
     const child = spawn("git", args, { cwd: repoRoot, windowsHide: true });
     let stdout = "";
@@ -108,6 +124,7 @@ function runGitChecked(args) {
 // "Add & Fetch Upstream" — register/update the upstream remote and fetch its branch on demand,
 // so the branch picker and ahead count populate without waiting for a full build run.
 async function registerUpstream(input = {}) {
+  if (!repoRoot) return { ok: false, error: "저장소를 먼저 선택하세요." };
   const cfg = (await workspace.load()).build || {};
   const remote = (input.remote || cfg.Run?.UpstreamRemote || "upstream").trim();
   const url = (input.url || cfg.Run?.UpstreamUrl || "https://github.com/EpicGames/UnrealEngine.git").trim();
@@ -146,10 +163,12 @@ async function registerUpstream(input = {}) {
 
 // Build settings now live in workspace.json (migrated from install_build_config.ini).
 async function getInstallConfig() {
+  if (!workspace) return {};
   return (await workspace.load()).build || {};
 }
 
 async function updateInstallConfig(patch) {
+  if (!workspace) return {};
   const ws = await workspace.load();
   ws.build = ws.build || {};
   for (const [section, keys] of Object.entries(patch || {})) {
@@ -161,7 +180,7 @@ async function updateInstallConfig(patch) {
 
 function buildAutomationArgs(input = {}) {
   // ponytail: no hardcoded fallbacks — omit the args so the ps1 resolves Run.Branch / Paths.OutputDirectory from install_build_config.ini.
-  const args = ["-File", path.join(automationRoot, "SyncAndBuildInstalled.ps1")];
+  const args = ["-File", path.join(automationRoot, "SyncAndBuildInstalled.ps1"), "-RepoRoot", repoRoot];
   if (input.branch) args.push("-Branch", input.branch);
   if (input.builtDirectory) args.push("-BuiltDirectory", input.builtDirectory);
   args.push(...boolArg(input.skipSetup, "-SkipSetup"));
@@ -175,6 +194,7 @@ function buildAutomationArgs(input = {}) {
 }
 
 function getBranches() {
+  if (!repoRoot) return Promise.resolve([]);
   return cached("branches", 30000, getBranchesUncached);
 }
 
@@ -216,6 +236,7 @@ async function cached(key, ttlMs, fn) {
 }
 
 function getGitSummary() {
+  if (!repoRoot) return Promise.resolve(null);
   return cached("gitSummary", 10000, async () => {
     // Upstream remote/branch are configurable (workspace.json build.Run.*); fall back to the fork's origin.
     const cfg = (await workspace.load()).build || {};
@@ -243,6 +264,7 @@ function getGitSummary() {
 }
 
 function getDisk() {
+  if (!repoRoot) return Promise.resolve({ drive: null, freeBytes: null, totalBytes: null });
   return cached("disk", 60000, async () => {
     const drive = repoRoot.slice(0, 2);
     const result = await runPowerShell(["-Command",
@@ -259,6 +281,7 @@ function getDisk() {
 // Output directory size is expensive to walk (200+ GB), so refresh it in the background.
 let outputSize = { bytes: null, updatedAt: null };
 async function refreshOutputSize() {
+  if (!repoRoot) return;
   try {
     const config = await getInstallConfig();
     const rel = config?.Paths?.OutputDirectory || "LocalBuilds\\Engine";
@@ -270,33 +293,49 @@ async function refreshOutputSize() {
     if (Number.isFinite(bytes)) outputSize = { bytes, updatedAt: new Date().toISOString() };
   } catch {}
 }
-setTimeout(refreshOutputSize, 15 * 1000);
 setInterval(refreshOutputSize, 30 * 60 * 1000);
 
-// monitor-state.json now holds machine state only (acks, deploy history);
-// all settings moved to AutomationMonitor/workspace.json.
-const stateStore = createStore(path.join(monitorLogRoot, "monitor-state.json"), {
-  acked: {},
-  deployHistory: []
-});
+// Point every repo-scoped path/store at the selected UE clone. monitor-state.json and
+// workspace.json now live under that clone's own LocalBuilds/AutomationMonitor/ — each
+// registered repo keeps its own build config, run options, deploy targets and alert state.
+async function activateRepo(targetPath) {
+  repoRoot = targetPath;
+  logRoot = path.join(repoRoot, "LocalBuilds", "AutomationLogs");
+  monitorLogRoot = path.join(repoRoot, "LocalBuilds", "AutomationMonitor");
+  installConfigPath = path.join(repoRoot, "install_build_config.ini");
+  stateStore = createStore(path.join(monitorLogRoot, "monitor-state.json"), { acked: {}, deployHistory: [] });
+  workspace = createWorkspace({
+    filePath: path.join(monitorLogRoot, "workspace.json"),
+    iniPath: installConfigPath,
+    statePath: path.join(monitorLogRoot, "monitor-state.json"),
+    hostname: machineInfo.host
+  });
+  deployManager = createDeployManager({
+    repoRoot,
+    monitorLogRoot,
+    store: stateStore,
+    getTargets: async () => (await workspace.load()).deploy?.targets || [],
+    getInstallConfig,
+    appendMonitorLog,
+    machineUser: machineInfo.user,
+    getOutputBytes: () => outputSize.bytes
+  });
+  ttlCache.clear();
+  outputSize = { bytes: null, updatedAt: null };
+  refreshOutputSize();
+}
 
-const workspace = createWorkspace({
-  filePath: path.join(appRoot, "workspace.json"),
-  iniPath: installConfigPath,
-  statePath: path.join(monitorLogRoot, "monitor-state.json"),
-  hostname: machineInfo.host
-});
-
-const deployManager = createDeployManager({
-  repoRoot,
-  monitorLogRoot,
-  store: stateStore,
-  getTargets: async () => (await workspace.load()).deploy?.targets || [],
-  getInstallConfig,
-  appendMonitorLog,
-  machineUser: machineInfo.user,
-  getOutputBytes: () => outputSize.bytes
-});
+function deactivateRepo() {
+  repoRoot = null;
+  logRoot = null;
+  monitorLogRoot = null;
+  installConfigPath = null;
+  workspace = null;
+  stateStore = null;
+  deployManager = null;
+  ttlCache.clear();
+  outputSize = { bytes: null, updatedAt: null };
+}
 
 function getTaskSummary() {
   return cached("taskSummary", 5000, getTaskSummaryUncached);
@@ -442,6 +481,7 @@ async function getStatus() {
   return {
     alerts,
     runOptions,
+    repos: await repoRegistry.load(),
     repoRoot,
     automationRoot,
     logRoot,
@@ -460,6 +500,7 @@ async function getStatus() {
 }
 
 async function startRun(input) {
+  if (!repoRoot) return { ok: false, error: "저장소를 먼저 선택하세요." };
   if (activeRun) {
     return { ok: false, error: `Automation is already running as PID ${activeRun.pid}.` };
   }
@@ -504,8 +545,10 @@ async function startRun(input) {
   return { ok: true, pid: child.pid, message: `Run Now started as PID ${child.pid}.`, runLogPath };
 }
 async function registerTask(input) {
+  if (!repoRoot) return { ok: false, error: "저장소를 먼저 선택하세요." };
   const args = [
     "-File", path.join(automationRoot, "Register-NightlyInstalledBuildTask.ps1"),
+    "-RepoRoot", repoRoot,
     "-TaskName", input.taskName || taskName,
     "-At", input.at || "02:00"
   ];
@@ -571,6 +614,34 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/register-task" && req.method === "POST") return sendJson(res, 200, await registerTask(await readBody(req)));
     if (url.pathname === "/api/start-task" && req.method === "POST") return sendJson(res, 200, await startScheduledTask());
     if (url.pathname === "/api/stop" && req.method === "POST") return sendJson(res, 200, stopActiveRun());
+    if (url.pathname === "/api/repos" && req.method === "GET") return sendJson(res, 200, await repoRegistry.load());
+    if (url.pathname === "/api/repos" && req.method === "POST") {
+      const body = await readBody(req);
+      const result = await repoRegistry.add(body.name, body.path);
+      if (!result.ok) return sendJson(res, 200, result);
+      const active = await repoRegistry.getActive();
+      if (active && active.id === result.repo.id) await activateRepo(active.path);
+      await appendMonitorLog(`Repository registered: ${result.repo.name} (${result.repo.path})`);
+      return sendJson(res, 200, { ok: true, ...result.data });
+    }
+    const repoIdMatch = /^\/api\/repos\/([^/]+)$/.exec(url.pathname);
+    if (repoIdMatch && req.method === "DELETE") {
+      if (activeRun) return sendJson(res, 200, { ok: false, error: "빌드 실행 중에는 저장소를 삭제할 수 없습니다." });
+      const result = await repoRegistry.remove(decodeURIComponent(repoIdMatch[1]));
+      const active = await repoRegistry.getActive();
+      if (active) await activateRepo(active.path); else deactivateRepo();
+      return sendJson(res, 200, { ok: true, ...result.data });
+    }
+    if (url.pathname === "/api/repos/active" && req.method === "POST") {
+      if (activeRun) return sendJson(res, 200, { ok: false, error: "빌드 실행 중에는 저장소를 전환할 수 없습니다." });
+      const body = await readBody(req);
+      const result = await repoRegistry.setActive(body.id);
+      if (!result.ok) return sendJson(res, 200, result);
+      const active = await repoRegistry.getActive();
+      await activateRepo(active.path);
+      await appendMonitorLog(`Active repository switched to ${active.name} (${active.path})`);
+      return sendJson(res, 200, { ok: true, ...result.data });
+    }
     const ackMatch = /^\/api\/alerts\/(.+)\/ack$/.exec(url.pathname);
     if (ackMatch && req.method === "POST") {
       const state = await stateStore.load();
@@ -656,6 +727,12 @@ server.listen(port, host, () => {
   console.log(`UE6 automation monitor server listening on http://${host}:${port}`);
   if (isDev) console.log("Use npm run ui in another terminal for the React dev server.");
 });
+
+// Resume whichever repo was active last session, if it's still on disk.
+(async () => {
+  const active = await repoRegistry.getActive();
+  if (active && fssync.existsSync(active.path)) await activateRepo(active.path);
+})();
 
 
 

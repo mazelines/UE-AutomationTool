@@ -1,5 +1,6 @@
 ﻿[CmdletBinding()]
 param(
+    [Parameter(Mandatory = $true)][string]$RepoRoot,
     [string]$TaskName = 'UE6 Nightly Upstream Sync And Installed Build',
     [string]$At = '02:00',
     [string]$Branch,
@@ -23,13 +24,15 @@ if ([string]::IsNullOrWhiteSpace($BuildScriptPath)) {
 }
 
 $BuildScriptPath = (Resolve-Path $BuildScriptPath).Path
+$RepoRoot = (Resolve-Path $RepoRoot).Path
 $runArguments = @(
     '-NoProfile',
     '-ExecutionPolicy', 'Bypass',
-    '-File', "`"$BuildScriptPath`""
+    '-File', "`"$BuildScriptPath`"",
+    '-RepoRoot', "`"$RepoRoot`""
 )
 
-# ponytail: no hardcoded fallbacks — omitted args resolve from AutomationMonitor/workspace.json (build section) at run time, so Save Config edits apply to the scheduled task without re-registering.
+# ponytail: no hardcoded fallbacks — omitted args resolve from <repo>/LocalBuilds/AutomationMonitor/workspace.json (build section) at run time, so Save Config edits apply to the scheduled task without re-registering.
 if (-not [string]::IsNullOrWhiteSpace($Branch)) { $runArguments += @('-Branch', "`"$Branch`"") }
 if (-not [string]::IsNullOrWhiteSpace($BuiltDirectory)) { $runArguments += @('-BuiltDirectory', "`"$BuiltDirectory`"") }
 

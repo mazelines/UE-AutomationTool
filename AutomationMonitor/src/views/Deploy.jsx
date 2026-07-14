@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { api, formatDate, formatSize, timeAgo } from "../api.js";
-import { Card, EmptyState } from "../components.jsx";
-import { IconFolder } from "../icons.jsx";
+import { Card, EmptyState, DirPicker } from "../components.jsx";
 
 export default function DeployView({ flash }) {
   const [data, setData] = useState(null);
@@ -13,7 +12,6 @@ export default function DeployView({ flash }) {
     color: "var(--text)", borderRadius: 7, padding: "7px 9px", outline: "none"
   };
   const [browsing, setBrowsing] = useState(false);
-  const [browse, setBrowse] = useState({ current: "", parent: null, entries: [], loading: false, error: null });
 
   async function refresh() {
     try {
@@ -66,27 +64,6 @@ export default function DeployView({ flash }) {
     const next = targets.map((t) => (t.id === target.id ? { ...t, path: draft.trim() } : t));
     setEditingId(null);
     await saveTargets(next);
-  }
-
-  async function openBrowser() {
-    setBrowsing(true);
-    await goBrowse(draft || "");
-  }
-
-  async function goBrowse(target) {
-    setBrowse((current) => ({ ...current, loading: true, error: null }));
-    try {
-      const query = target ? `?path=${encodeURIComponent(target)}` : "";
-      const res = await api(`/api/browse${query}`);
-      setBrowse({ ...res, loading: false, error: null });
-    } catch (error) {
-      setBrowse((current) => ({ ...current, loading: false, error: error.message }));
-    }
-  }
-
-  function pickBrowse() {
-    if (browse.current) setDraft(browse.current);
-    setBrowsing(false);
   }
 
   const lastDeployFor = (targetId) => history.find((entry) => entry.targetId === targetId);
@@ -168,7 +145,7 @@ export default function DeployView({ flash }) {
                     />
                     <div style={{ display: "flex", gap: 7, justifyContent: "flex-end" }}>
                       <button className="btn sm" onClick={() => setEditingId(null)}>취소</button>
-                      <button className="btn sm" onClick={openBrowser}>찾아보기</button>
+                      <button className="btn sm" onClick={() => setBrowsing(true)}>찾아보기</button>
                       <button className="btn accent sm" onClick={() => commitEdit(target)}>저장</button>
                     </div>
                   </div>
@@ -236,37 +213,11 @@ export default function DeployView({ flash }) {
       </div>
 
       {browsing && (
-        <div className="modal-overlay" onClick={() => setBrowsing(false)}>
-          <div className="modal" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-head">
-              <b>폴더 찾아보기</b>
-              <button className="btn tiny" onClick={() => setBrowsing(false)}>닫기</button>
-            </div>
-            <div className="modal-path">
-              <button className="btn tiny" disabled={!browse.parent} onClick={() => goBrowse(browse.parent)}>↑ 상위</button>
-              <span className="cell-mono" style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-dim)" }}>
-                {browse.current || "내 PC · 드라이브 목록"}
-              </span>
-            </div>
-            <div className="modal-list">
-              {browse.loading && <div className="browse-empty">불러오는 중…</div>}
-              {!browse.loading && browse.error && <div className="browse-empty" style={{ color: "var(--danger)" }}>접근 불가: {browse.error}</div>}
-              {!browse.loading && !browse.error && browse.entries.length === 0 && <div className="browse-empty">하위 폴더 없음</div>}
-              {!browse.loading && !browse.error && browse.entries.map((entry) => (
-                <button key={entry.path} className="browse-entry" onClick={() => goBrowse(entry.path)}>
-                  <IconFolder />
-                  <span>{entry.name}</span>
-                </button>
-              ))}
-            </div>
-            <div className="modal-foot">
-              <span className="cell-mono" style={{ fontSize: 11.5, color: "var(--text-dim)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                선택 대상: {browse.current || "—"}
-              </span>
-              <button className="btn accent sm" disabled={!browse.current} onClick={pickBrowse}>이 폴더 선택</button>
-            </div>
-          </div>
-        </div>
+        <DirPicker
+          initial={draft}
+          onClose={() => setBrowsing(false)}
+          onPick={(picked) => { setDraft(picked); setBrowsing(false); }}
+        />
       )}
     </div>
   );
