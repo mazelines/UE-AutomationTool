@@ -128,7 +128,7 @@ AutomationMonitor/
 
 `SyncAndBuildInstalled.ps1`의 `Invoke-LoggedStep` 이름과 1:1 대응합니다.
 
-1. Validate repository state  
+1. Validate repository state (sync 전 `Templates/`의 tracked 변경은 자동 discard — 빌드/에디터가 다시 쓰는 `DefaultEngine.ini`가 매번 sync를 막던 문제 해결)  
 2. Configure upstream remote  
 3. Fetch origin and upstream  
 4. Checkout build branch  

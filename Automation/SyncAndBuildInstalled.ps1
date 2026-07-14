@@ -147,6 +147,15 @@ try {
     Invoke-LoggedStep 'Validate repository state' {
         Invoke-Git rev-parse --is-inside-work-tree | Out-Null
 
+        # Template projects' Config/DefaultEngine.ini are rewritten by editor/build runs and
+        # always resurface as tracked changes, blocking the sync. Discard them every run so
+        # the working tree is clean before fetch/merge — they are build-generated, not authored.
+        $templateChanges = @(& git status --porcelain --untracked-files=no -- Templates)
+        if ($templateChanges.Count -gt 0) {
+            & git checkout -- Templates
+            Write-Host "Discarded $($templateChanges.Count) tracked change(s) under Templates/ before sync."
+        }
+
         $trackedChanges = (& git status --porcelain --untracked-files=no)
         if ($LASTEXITCODE -ne 0) {
             throw 'git status failed.'
