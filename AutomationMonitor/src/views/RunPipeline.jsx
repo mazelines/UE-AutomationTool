@@ -102,6 +102,19 @@ export default function RunPipelineView({ status, installConfig, setInstallConfi
   const installValue = (section, key, fallback = "") => installConfig?.[section]?.[key] ?? fallback;
   const installBool = (section, key) => installValue(section, key).toLowerCase() === "true";
 
+  // TargetPlatform is a semicolon list (an installed engine can target several platforms,
+  // e.g. Win64;Android;IOS). Toggle membership while keeping canonical order + off-list extras.
+  const platformSet = new Set(installValue("Build", "TargetPlatform").split(";").map((s) => s.trim()).filter(Boolean));
+  const togglePlatform = (platform, on) => {
+    const next = new Set(platformSet);
+    if (on) next.add(platform); else next.delete(platform);
+    const ordered = [
+      ...TARGET_PLATFORMS.filter((p) => next.has(p)),
+      ...[...next].filter((p) => !TARGET_PLATFORMS.includes(p))
+    ];
+    patchInstall("Build", "TargetPlatform", ordered.join(";"));
+  };
+
   const cfgBranch = installValue("Run", "Branch", "ue6-main");
   const cfgUpstreamRemote = installValue("Run", "UpstreamRemote", "upstream");
   const cfgUpstreamBranch = installValue("Run", "UpstreamBranch", "ue6-main");
@@ -168,11 +181,9 @@ export default function RunPipelineView({ status, installConfig, setInstallConfi
             <div className="field-grid">
               <Field label="Branch">
                 <select value={cfgBranch} onChange={(event) => patchInstall("Run", "Branch", event.target.value)}>
-                  {!branches.some((item) => item.name === cfgBranch) && <option value={cfgBranch}>{cfgBranch}</option>}
-                  {branches.map((item) => (
-                    <option key={item.name} value={item.name}>
-                      {item.name}{item.hasLocal ? "" : " (remote)"}
-                    </option>
+                  {!branches.some((item) => item.hasLocal && item.name === cfgBranch) && <option value={cfgBranch}>{cfgBranch}</option>}
+                  {branches.filter((item) => item.hasLocal).map((item) => (
+                    <option key={item.name} value={item.name}>{item.name}</option>
                   ))}
                 </select>
               </Field>
@@ -196,11 +207,22 @@ export default function RunPipelineView({ status, installConfig, setInstallConfi
                   {enumOptions(BUILD_LABELS, installValue("Version", "BuildLabel"))}
                 </select>
               </Field>
-              <Field label="Target Platform">
-                <select value={installValue("Build", "TargetPlatform")} onChange={(event) => patchInstall("Build", "TargetPlatform", event.target.value)}>
-                  {enumOptions(TARGET_PLATFORMS, installValue("Build", "TargetPlatform"))}
-                </select>
-              </Field>
+              <div className="field span2">
+                <span style={{ display: "block", fontSize: 12, color: "var(--text-dim)", marginBottom: 7, fontWeight: 500 }}>
+                  Target Platform <span className="hint">(다중 선택 · installed engine이 지원할 플랫폼)</span>
+                </span>
+                <div className="tile-grid-3">
+                  {TARGET_PLATFORMS.map((platform) => (
+                    <CheckTile
+                      key={platform}
+                      compact
+                      label={platform}
+                      checked={platformSet.has(platform)}
+                      onChange={(value) => togglePlatform(platform, value)}
+                    />
+                  ))}
+                </div>
+              </div>
               <label className="field span2">
                 <span>Game Configurations</span>
                 <select value={installValue("Build", "GameConfigurations")} onChange={(event) => patchInstall("Build", "GameConfigurations", event.target.value)}>

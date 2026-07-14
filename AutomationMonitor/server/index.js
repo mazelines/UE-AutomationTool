@@ -178,10 +178,19 @@ async function updateInstallConfig(patch) {
   return ws.build;
 }
 
-function buildAutomationArgs(input = {}) {
-  // ponytail: no hardcoded fallbacks — omit the args so the ps1 resolves Run.Branch / Paths.OutputDirectory from install_build_config.ini.
+async function resolveBranch(input = {}) {
+  // Branch used to come from install_build_config.ini; that migrated to workspace.json. Resolve it
+  // here so the ps1 never falls back to its stale hardcoded default (which no longer exists on origin).
+  if (input.branch) return input.branch;
+  const config = await getInstallConfig();
+  if (config.Run?.Branch) return config.Run.Branch;
+  return (await runGit(["rev-parse", "--abbrev-ref", "HEAD"])).trim(); // the checked-out branch always exists locally
+}
+
+async function buildAutomationArgs(input = {}) {
+  const branch = await resolveBranch(input);
   const args = ["-File", path.join(automationRoot, "SyncAndBuildInstalled.ps1"), "-RepoRoot", repoRoot];
-  if (input.branch) args.push("-Branch", input.branch);
+  if (branch) args.push("-Branch", branch);
   if (input.builtDirectory) args.push("-BuiltDirectory", input.builtDirectory);
   args.push(...boolArg(input.skipSetup, "-SkipSetup"));
   args.push(...boolArg(input.skipGenerateProjectFiles, "-SkipGenerateProjectFiles"));
@@ -505,7 +514,7 @@ async function startRun(input) {
     return { ok: false, error: `Automation is already running as PID ${activeRun.pid}.` };
   }
 
-  const args = buildAutomationArgs(input);
+  const args = await buildAutomationArgs(input);
   await fs.mkdir(monitorLogRoot, { recursive: true });
   const runLogPath = path.join(monitorLogRoot, `run-now-${new Date().toISOString().replace(/[:.]/g, "-")}.log`);
   await appendMonitorLog(`Run Now requested with args: ${args.join(" ")}`);
@@ -552,7 +561,8 @@ async function registerTask(input) {
     "-TaskName", input.taskName || taskName,
     "-At", input.at || "02:00"
   ];
-  if (input.branch) args.push("-Branch", input.branch);
+  const branch = await resolveBranch(input);
+  if (branch) args.push("-Branch", branch);
   if (input.builtDirectory) args.push("-BuiltDirectory", input.builtDirectory);
   args.push(...boolArg(input.skipSetup, "-SkipSetup"));
   args.push(...boolArg(input.skipGenerateProjectFiles, "-SkipGenerateProjectFiles"));
