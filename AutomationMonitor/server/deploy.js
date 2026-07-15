@@ -145,7 +145,7 @@ export function createDeployManager({ repoRoot, monitorLogRoot, store, getTarget
     if (!current) return;
     const state = await store.load();
     if (state.lastAutoDeploy === current.timestamp) return;
-    // ponytail: mark before deploying — one attempt per build, no retry loop when the target share is down.
+    // Mark before deploying — one attempt per build, no retry loop when the target share is down.
     state.lastAutoDeploy = current.timestamp;
     await store.save();
     const result = await startDeploy({ targetId: auto.targetId || "smb", auto: true });
