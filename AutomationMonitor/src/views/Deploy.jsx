@@ -31,6 +31,29 @@ export default function DeployView({ flash }) {
   const targets = data?.targets || [];
   const history = data?.history || [];
   const active = data?.active;
+  const auto = data?.auto || { enabled: false };
+  const format = data?.format || "7z";
+
+  async function changeFormat(next) {
+    try {
+      const saved = await api("/api/deploy/format", { method: "POST", body: JSON.stringify({ format: next }) });
+      if (!saved.ok) return flash("error", saved.error);
+      setData((current) => ({ ...current, format: saved.format }));
+      flash("info", `배포 압축 형식: Engine.${saved.format}`);
+    } catch (error) {
+      flash("error", error.message);
+    }
+  }
+
+  async function toggleAuto() {
+    try {
+      const saved = await api("/api/deploy/auto", { method: "POST", body: JSON.stringify({ enabled: !auto.enabled }) });
+      setData((current) => ({ ...current, auto: saved }));
+      flash("info", saved.enabled ? "빌드 성공 시 자동 배포가 켜졌습니다." : "자동 배포가 꺼졌습니다.");
+    } catch (error) {
+      flash("error", error.message);
+    }
+  }
 
   async function deploy(targetId) {
     setBusy(true);
@@ -124,6 +147,29 @@ export default function DeployView({ flash }) {
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 18, alignItems: "start", marginTop: 18 }}>
         <Card title="Distribution Targets">
           <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 11 }}>
+            <div style={{ border: "1px solid var(--border)", borderRadius: 11, padding: "12px 15px", background: "var(--surface-2)", display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 600 }}>빌드 성공 시 자동 배포</div>
+                  <div style={{ fontSize: 11, color: "var(--text-mute)" }}>새 CURRENT 아티팩트를 Engine.{format}으로 압축해 SMB 타깃에 배포</div>
+                </div>
+                <button className={`switch${auto.enabled ? " on" : ""}`} onClick={toggleAuto}>
+                  <span className="knob" />
+                </button>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
+                <div style={{ flex: 1, fontSize: 11.5, color: "var(--text-dim)" }}>압축 형식</div>
+                <select
+                  value={format}
+                  disabled={Boolean(active)}
+                  onChange={(event) => changeFormat(event.target.value)}
+                  style={{ ...inputStyle, width: 130, fontFamily: "var(--font-mono)", fontSize: 12, padding: "5px 8px" }}
+                >
+                  <option value="7z">7z (Engine.7z)</option>
+                  <option value="zip">zip (Engine.zip)</option>
+                </select>
+              </div>
+            </div>
             {targets.map((target) => {
               const last = lastDeployFor(target.id);
               const editing = editingId === target.id;
@@ -202,7 +248,7 @@ export default function DeployView({ flash }) {
                     <span style={{ fontFamily: "var(--font-mono)", color: "var(--text-dim)" }}>{entry.target}</span>
                   </div>
                   <div style={{ fontSize: 11.5, color: "var(--text-mute)", marginTop: 3, fontFamily: "var(--font-mono)" }}>
-                    {formatDate(entry.at)} · by {entry.by}{entry.ok ? "" : ` · robocopy ${entry.robocopyCode}`}
+                    {formatDate(entry.at)} · by {entry.by}{entry.ok ? "" : entry.code != null ? ` · 7z ${entry.code}` : ` · robocopy ${entry.robocopyCode}`}
                   </div>
                 </div>
               </div>

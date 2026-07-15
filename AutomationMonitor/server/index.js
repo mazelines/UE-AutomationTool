@@ -304,6 +304,10 @@ async function refreshOutputSize() {
 }
 setInterval(refreshOutputSize, 30 * 60 * 1000);
 
+// Auto-deploy watcher — a new successful build_summary appears once per finished build,
+// regardless of whether the run came from the monitor or the scheduled task.
+setInterval(() => deployManager?.checkAutoDeploy().catch(() => {}), 60 * 1000);
+
 // Point every repo-scoped path/store at the selected UE clone. monitor-state.json and
 // workspace.json now live under that clone's own LocalBuilds/AutomationMonitor/ — each
 // registered repo keeps its own build config, run options, deploy targets and alert state.
@@ -324,6 +328,8 @@ async function activateRepo(targetPath) {
     monitorLogRoot,
     store: stateStore,
     getTargets: async () => (await workspace.load()).deploy?.targets || [],
+    getAutoDeploy: async () => (await workspace.load()).deploy?.auto,
+    getFormat: async () => (await workspace.load()).deploy?.format || "7z",
     getInstallConfig,
     appendMonitorLog,
     machineUser: machineInfo.user,
@@ -684,6 +690,8 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, {
         artifacts: await deployManager.listArtifacts(),
         targets: ws.deploy?.targets || [],
+        auto: ws.deploy?.auto || { enabled: false, targetId: "smb" },
+        format: ws.deploy?.format || "7z",
         history: state.deployHistory,
         active: deployManager.getActive()
       });
@@ -700,6 +708,30 @@ const server = http.createServer(async (req, res) => {
         await workspace.save();
       }
       return sendJson(res, 200, ws.deploy.targets);
+    }
+    if (url.pathname === "/api/deploy/format" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!["7z", "zip"].includes(body.format)) return sendJson(res, 200, { ok: false, error: "format은 7z 또는 zip이어야 합니다." });
+      const ws = await workspace.load();
+      ws.deploy = ws.deploy || {};
+      ws.deploy.format = body.format;
+      await workspace.save();
+      return sendJson(res, 200, { ok: true, format: ws.deploy.format });
+    }
+    if (url.pathname === "/api/deploy/auto" && req.method === "POST") {
+      const body = await readBody(req);
+      const ws = await workspace.load();
+      ws.deploy = ws.deploy || {};
+      ws.deploy.auto = { enabled: Boolean(body.enabled), targetId: body.targetId || ws.deploy.auto?.targetId || "smb" };
+      await workspace.save();
+      if (ws.deploy.auto.enabled) {
+        // Baseline at the current artifact so enabling doesn't immediately re-deploy an old build.
+        const current = (await deployManager.listArtifacts()).find((a) => a.current);
+        const state = await stateStore.load();
+        state.lastAutoDeploy = current?.timestamp || null;
+        await stateStore.save();
+      }
+      return sendJson(res, 200, ws.deploy.auto);
     }
     if (url.pathname === "/api/deploy/start" && req.method === "POST") {
       return sendJson(res, 200, await deployManager.startDeploy(await readBody(req)));

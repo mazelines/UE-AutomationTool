@@ -64,7 +64,7 @@ export function createWorkspace({ filePath, iniPath, statePath, hostname }) {
       version: 1,
       build: {},
       runOptions: { ...DEFAULT_RUN_OPTIONS },
-      deploy: { targets: defaultTargets() },
+      deploy: { targets: defaultTargets(), auto: { enabled: false, targetId: "smb" }, format: "7z" },
       alerts: { channels: defaultChannels(hostname), thresholds: { ...DEFAULT_THRESHOLDS } }
     };
     try {
