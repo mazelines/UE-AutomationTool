@@ -196,6 +196,22 @@ AutomationMonitor/
 - **자동 배포**: 켠 시점의 CURRENT 아티팩트를 기준선으로 잡아 과거 빌드를 다시 배포하지 않습니다. 빌드당 한 번만 시도하며, 실패하면 재시도 없이 모니터 로그에 남깁니다.
 - **테마**: 사이드바 하단·상단의 라이트/다크 토글. `localStorage`에 저장.
 
+## 트러블슈팅
+
+### 빌드는 SUCCESS인데 출력물이 비정상적으로 작을 때 (Templates/FeaturePacks 누락)
+
+빌드 요약이 SUCCESS인데 출력 크기가 평소(수십 GB)보다 훨씬 작고 `Engine/Content`·`Templates`·`FeaturePacks`가 없다면, BuildGraph의 `Make Installed Build` 메인 복사 단계가 통째로 스킵된 것입니다. `InstalledBuild-*-output.log`에서 다음 패턴을 찾으세요:
+
+```
+Error while trying to create file pattern match for '...': Source file '...' does not exist
+```
+
+`Engine/Build/InstalledEngineFilters.xml`에 정확 경로로 명시된 파일이 디스크에 없으면 해당 복사 전체가 중단되는데, **종료 코드는 0이라 요약에는 SUCCESS로 기록됩니다.** 주로 upstream이 gitdeps에서 바이너리 의존성을 제거(→ 다음 Setup.bat이 로컬 파일을 prune)하면서 필터 XML의 참조 정리를 빠뜨릴 때 발생합니다.
+
+실제 사례 (2026-07-16): upstream `f2e0d9a12c91`(UE-384283)이 cl-filter를 gitdeps에서 제거했지만 필터 XML의 `Engine/Build/Windows/cl-filter/cl-filter.exe` 참조를 남겨둠 → 야간 sync 후 Setup.bat이 exe를 삭제 → 이후 빌드가 4GB짜리 깡통으로 나옴. 필터 XML에서 해당 줄을 제거해 해결 (UE6 저장소 `fdc4af80c6a4`).
+
+**대처**: 로그의 에러가 가리키는 파일을 필터 XML에서 제거하거나(도구가 더 이상 안 쓰이는 경우), 파일을 복구하세요. 없어진 exe는 런처 설치 엔진(`C:\Program Files\Epic Games\UE_*`)의 같은 경로에서 복사해올 수 있습니다.
+
 ## 관련 스크립트
 
 도구 루트 `Automation/` (대상 UE 저장소가 아니라 이 도구에 속함):
