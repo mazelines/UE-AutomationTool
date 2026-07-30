@@ -1,4 +1,4 @@
-﻿import http from "node:http";
+import http from "node:http";
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import fssync from "node:fs";
@@ -9,8 +9,9 @@ import { buildPipelineStatus } from "./pipeline.js";
 import { computeAlerts } from "./alerts.js";
 import { createStore } from "./store.js";
 import { createDeployManager } from "./deploy.js";
-import { createWorkspace, DEFAULT_RUN_OPTIONS } from "./workspace.js";
+import { createWorkspace, DEFAULT_RUN_OPTIONS, DEFAULT_BUILD_CONFIG, DEFAULT_AI_PROVIDERS, DEFAULT_AI_CONFIG } from "./workspace.js";
 import { createRepoRegistry } from "./repos.js";
+import { diagnoseRun } from "./ai/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(__dirname, "..");
@@ -36,6 +37,12 @@ let stateStore = null;
 let deployManager = null;
 
 let activeRun = null;
+// Timestamp of the last user-requested Stop Run. Lets pipeline status flip the
+// interrupted run to "aborted" immediately instead of waiting out the 3-minute
+// "log recently touched" grace window. Cleared when a new run starts.
+let lastStopRequestAt = null;
+// Cache for the latest pipeline status so AI auto-diagnosis can react to failures.
+let lastPipelineStatus = { pipeline: null, runs: [] };
 
 const pkg = JSON.parse(fssync.readFileSync(path.join(appRoot, "package.json"), "utf8"));
 const machineInfo = {
@@ -73,9 +80,22 @@ async function readBody(req) {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
+// Resolve Windows PowerShell by absolute path: the server inherits whatever PATH its
+// launcher had, and a stripped PATH (missing System32\WindowsPowerShell\v1.0) silently
+// breaks every PowerShell-dependent feature (task status, Stop Run, disk info, ...).
+const powershellExe = (() => {
+  const full = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  return fssync.existsSync(full) ? full : "powershell.exe";
+})();
+// Same PATH-robustness reasoning as powershellExe — taskkill lives in System32.
+const taskkillExe = (() => {
+  const full = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "taskkill.exe");
+  return fssync.existsSync(full) ? full : "taskkill";
+})();
+
 function runPowerShell(args, options = {}) {
   return new Promise((resolve) => {
-    const child = spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", ...args], {
+    const child = spawn(powershellExe, ["-NoProfile", "-ExecutionPolicy", "Bypass", ...args], {
       cwd: repoRoot || toolRoot,
       windowsHide: true,
       ...options
@@ -164,7 +184,15 @@ async function registerUpstream(input = {}) {
 // Build settings now live in workspace.json (migrated from install_build_config.ini).
 async function getInstallConfig() {
   if (!workspace) return {};
-  return (await workspace.load()).build || {};
+  const build = (await workspace.load()).build || {};
+  // Safety net in case load() normalization was bypassed — seed empty user-facing fields.
+  for (const [section, keys] of Object.entries(DEFAULT_BUILD_CONFIG)) {
+    build[section] = { ...build[section] };
+    for (const [key, value] of Object.entries(keys)) {
+      if (build[section][key] === undefined || build[section][key] === "") build[section][key] = value;
+    }
+  }
+  return build;
 }
 
 async function updateInstallConfig(patch) {
@@ -460,6 +488,162 @@ async function browseDirs(input) {
   }
 }
 
+async function getAiConfig() {
+  if (!workspace) return { ...DEFAULT_AI_CONFIG, providers: DEFAULT_AI_PROVIDERS };
+  const ws = await workspace.load();
+  return ws.ai || { ...DEFAULT_AI_CONFIG, providers: DEFAULT_AI_PROVIDERS };
+}
+
+function sanitizeAiConfig(ai) {
+  const out = { ...ai, providers: {} };
+  for (const id of Object.keys(DEFAULT_AI_PROVIDERS)) {
+    const p = ai.providers?.[id] || DEFAULT_AI_PROVIDERS[id];
+    out.providers[id] = {
+      id: p.id,
+      name: p.name,
+      kind: p.kind,
+      enabled: id === "claude" ? true : Boolean(p.enabled),
+      baseUrl: p.baseUrl || "",
+      model: p.model || "",
+      modelHint: p.modelHint || "",
+      cliPath: p.cliPath || "",
+      flags: p.flags || [],
+      // Never expose the API key back to the browser.
+      apiKey: p.apiKey ? "[REDACTED]" : ""
+    };
+  }
+  return out;
+}
+
+let autoDiagnoseInProgress = new Set();
+
+async function maybeAutoDiagnose(pipelineStatus) {
+  if (!workspace || !logRoot) return;
+  try {
+    const aiConfig = await getAiConfig();
+    if (!aiConfig.autoDiagnose) return;
+
+    const failedRuns = (pipelineStatus.runs || []).filter((run) =>
+      run.result === "failed" && !aiConfig.diagnostics?.[run.logName]
+    );
+    if (!failedRuns.length) return;
+
+    for (const run of failedRuns) {
+      if (autoDiagnoseInProgress.has(run.logName)) continue;
+      autoDiagnoseInProgress.add(run.logName);
+      try {
+        await performDiagnosis(run.logName, aiConfig);
+      } catch (error) {
+        await appendMonitorLog(`Auto-diagnosis failed for ${run.logName}: ${error.message || error}`);
+      } finally {
+        autoDiagnoseInProgress.delete(run.logName);
+      }
+    }
+  } catch (error) {
+    await appendMonitorLog(`AI auto-diagnosis check error: ${error.message || error}`);
+  }
+}
+
+async function performDiagnosis(logName, aiConfig) {
+  const run = (lastPipelineStatus.runs || []).find((r) => r.logName === logName);
+  if (!run) return { ok: false, error: "Run not found" };
+
+  const ws = await workspace.load();
+  const cfg = aiConfig || ws.ai || { ...DEFAULT_AI_CONFIG, providers: DEFAULT_AI_PROVIDERS };
+  const git = await getGitSummary();
+  const repoInfo = {
+    branch: git?.branch,
+    head: git?.head,
+    upstreamRef: git?.upstreamRef
+  };
+
+  const result = await diagnoseRun({ logRoot, run, repoInfo, aiConfig: cfg, tailFile });
+
+  // Save the diagnosis keyed by wrapper log name.
+  ws.ai = ws.ai || { ...DEFAULT_AI_CONFIG, providers: structuredClone(DEFAULT_AI_PROVIDERS) };
+  ws.ai.diagnostics = ws.ai.diagnostics || {};
+  ws.ai.diagnostics[run.logName] = { ...result, ...result.diagnosis };
+  await workspace.save();
+
+  await appendMonitorLog(
+    result.ok
+      ? `AI diagnosis completed for ${run.logName} using ${result.providerName || result.providerId}`
+      : `AI diagnosis failed for ${run.logName}: ${result.error}`
+  );
+  return result;
+}
+
+// Resolve the effective provider config: stored values with the current form state
+// (`overrides`) layered on top, so unsaved edits work for tests and model listings.
+// A "[REDACTED]" apiKey from the browser means "keep the stored key".
+async function resolveAiProviderConfig(providerId, overrides) {
+  const aiConfig = await getAiConfig();
+  const saved = aiConfig.providers?.[providerId];
+  if (!saved) return null;
+  const cfg = { ...saved };
+  if (overrides && typeof overrides === "object") {
+    if (typeof overrides.baseUrl === "string") cfg.baseUrl = overrides.baseUrl;
+    if (typeof overrides.model === "string") cfg.model = overrides.model;
+    if (typeof overrides.cliPath === "string") cfg.cliPath = overrides.cliPath;
+    if (typeof overrides.apiKey === "string" && overrides.apiKey !== "[REDACTED]") cfg.apiKey = overrides.apiKey;
+  }
+  return cfg;
+}
+
+// Fetch the provider's model list so the UI can offer a dropdown. Returns an empty
+// list (never throws) when the provider is not OpenAI-compatible or /models fails.
+async function listAiProviderModels(providerId, overrides) {
+  const cfg = await resolveAiProviderConfig(providerId, overrides);
+  if (!cfg) return { ok: false, error: `Provider ${providerId} not found` };
+  if (cfg.kind !== "openai-compatible") return { ok: true, models: [] };
+  if (!cfg.baseUrl || !cfg.apiKey) return { ok: true, models: [] };
+  const { listModels } = await import("./ai/openai-compatible.js");
+  return { ok: true, models: await listModels(cfg) };
+}
+
+// Connection-test a provider. The form may hold values the user has not saved yet, so
+// `overrides` (the current form state) wins over the stored config — otherwise testing a
+// freshly typed API key always fails with "not enabled or misconfigured".
+async function testAiProvider(providerId, overrides) {
+  const cfg = await resolveAiProviderConfig(providerId, overrides);
+  if (!cfg) return { ok: false, error: `Provider ${providerId} not found` };
+  const { createProvider } = await import("./ai/providers.js");
+  let models = [];
+  if (cfg.kind === "openai-compatible") {
+    const missing = [];
+    if (!cfg.baseUrl) missing.push("Base URL");
+    if (!cfg.apiKey) missing.push("API Key");
+    if (missing.length) return { ok: false, error: `${missing.join(", ")}이(가) 비어 있습니다. 값을 입력한 뒤 다시 테스트하세요.` };
+    // Model can be auto-discovered: fetch the endpoint's model list and pick a default
+    // when the user has not chosen one yet.
+    const { listModels } = await import("./ai/openai-compatible.js");
+    models = await listModels(cfg);
+    if (!cfg.model) {
+      if (!models.length) {
+        return { ok: false, error: "모델 목록을 가져오지 못했습니다. Model을 직접 입력한 뒤 다시 테스트하세요." };
+      }
+      cfg.model = pickDefaultModel(models, cfg.modelHint);
+    }
+  }
+  // The enabled gate applies to diagnosis runs, not to the connection test itself.
+  const provider = createProvider({ ...cfg, enabled: true });
+  if (!provider) return { ok: false, error: `Provider ${providerId}를 초기화할 수 없습니다 (CLI 경로/설정을 확인하세요).` };
+  const result = await provider.diagnose("Respond with a JSON object: {\"ok\": true, \"message\": \"hello\"}. Only output the JSON.");
+  if (!result.ok) return result;
+  const parsed = (await import("./ai/providers.js")).parseJsonResponse(result.text);
+  return { ok: true, raw: result.text, parsed, model: cfg.model, models };
+}
+
+// Pick a sensible default from a /models listing: exact hint match, then prefix, then first.
+function pickDefaultModel(models, hint) {
+  if (hint && models.includes(hint)) return hint;
+  if (hint) {
+    const prefixed = models.find((m) => m.startsWith(hint));
+    if (prefixed) return prefixed;
+  }
+  return models[0];
+}
+
 async function getStatus() {
   const [git, branches, task, logs, disk] = await Promise.all([getGitSummary(), getBranches(), getTaskSummary(), listLogs(), getDisk()]);
   const latestLog = logs[0];
@@ -474,14 +658,19 @@ async function getStatus() {
       logs,
       tailFile,
       isMonitorRunActive: Boolean(activeRun),
-      isTaskRunning: task?.state === "Running"
+      isTaskRunning: task?.state === "Running",
+      stoppedAt: lastStopRequestAt
     });
+    lastPipelineStatus = pipelineStatus;
+    maybeAutoDiagnose(pipelineStatus);
   } catch {}
   let alerts = { list: [], openCount: 0 };
   let runOptions = { ...DEFAULT_RUN_OPTIONS };
+  let ai = { ...DEFAULT_AI_CONFIG, providers: DEFAULT_AI_PROVIDERS };
   try {
     const [state, ws] = await Promise.all([stateStore.load(), workspace.load()]);
     runOptions = { ...DEFAULT_RUN_OPTIONS, ...ws.runOptions };
+    ai = ws.ai || ai;
     const list = computeAlerts({
       runs: pipelineStatus.runs,
       disk,
@@ -494,6 +683,7 @@ async function getStatus() {
     alerts = { list, openCount: list.filter((a) => !a.acked).length, thresholds: ws.alerts?.thresholds };
   } catch {}
   return {
+    ai: sanitizeAiConfig(ai),
     alerts,
     runOptions,
     repos: await repoRegistry.load(),
@@ -521,12 +711,13 @@ async function startRun(input) {
   }
 
   const args = await buildAutomationArgs(input);
+  lastStopRequestAt = null;
   await fs.mkdir(monitorLogRoot, { recursive: true });
   const runLogPath = path.join(monitorLogRoot, `run-now-${new Date().toISOString().replace(/[:.]/g, "-")}.log`);
   await appendMonitorLog(`Run Now requested with args: ${args.join(" ")}`);
   await fs.appendFile(runLogPath, `Run Now requested at ${new Date().toISOString()}\nArguments: ${args.join(" ")}\n\n`, "utf8");
 
-  const child = spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", ...args], {
+  const child = spawn(powershellExe, ["-NoProfile", "-ExecutionPolicy", "Bypass", ...args], {
     cwd: repoRoot,
     windowsHide: false,
     detached: false
@@ -587,13 +778,76 @@ async function startScheduledTask() {
   return { ok: result.code === 0, ...result };
 }
 
-function stopActiveRun() {
-  if (!activeRun) return { ok: false, error: "No monitor-started automation process is running." };
-  const pid = activeRun.pid;
-  // ponytail: SIGTERM only kills powershell.exe; RunUAT->dotnet->UBT survive as orphans and trip the build guard. taskkill /T kills the whole tree.
-  spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true });
-  activeRun = null;
-  return { ok: true, pid };
+// ponytail: SIGTERM only kills powershell.exe; RunUAT->dotnet->UBT survive as orphans and trip the build guard. taskkill /T kills the whole tree.
+function killProcessTree(pid) {
+  return new Promise((resolve) => {
+    const killer = spawn(taskkillExe, ["/PID", String(pid), "/T", "/F"], { windowsHide: true });
+    let output = "";
+    killer.stdout?.on("data", (data) => { output += data.toString(); });
+    killer.stderr?.on("data", (data) => { output += data.toString(); });
+    killer.on("close", (code) => resolve({ code, output: output.trim() }));
+    killer.on("error", (error) => resolve({ code: -1, output: String(error) }));
+  });
+}
+
+// Build processes launched by the scheduled task are not children of this server, so the
+// activeRun tree-kill cannot reach them. Find every powershell running SyncAndBuildInstalled.ps1
+// for the active repo (plus any orphaned RunUAT/UBT/BuildGraph under it) via CIM instead.
+// $_.ProcessId -ne $PID excludes the querying powershell itself — its own command line
+// contains these literal match strings.
+async function findBuildProcessIds() {
+  if (!repoRoot) return [];
+  const root = repoRoot.replaceAll("'", "''");
+  const script = `$root = '${root}'; ` +
+    `Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -and ` +
+    `$_.CommandLine.IndexOf($root, [StringComparison]::OrdinalIgnoreCase) -ge 0 -and ` +
+    `($_.CommandLine -like '*SyncAndBuildInstalled.ps1*' -or $_.CommandLine -like '*RunUAT.bat*' -or ` +
+    `$_.CommandLine -like '*UnrealBuildTool*' -or $_.CommandLine -like '*BuildGraph*') } | ` +
+    `Select-Object -ExpandProperty ProcessId | ConvertTo-Json -Compress`;
+  const result = await runPowerShell(["-Command", script]);
+  try {
+    const parsed = JSON.parse(result.stdout || "[]");
+    return (Array.isArray(parsed) ? parsed : [parsed]).map(Number).filter(Number.isFinite);
+  } catch {
+    return [];
+  }
+}
+
+// Stop Run must cancel immediately regardless of how the build was launched:
+// 1) monitor-spawned run -> kill its process tree and await taskkill (was fire-and-forget),
+// 2) scheduled-task run -> Stop-ScheduledTask + kill the task's powershell tree via CIM,
+// 3) any orphaned RunUAT/UBT left over from an earlier kill -> kill them too (build guard trips otherwise).
+async function stopRun() {
+  lastStopRequestAt = new Date().toISOString();
+  const killedPids = [];
+
+  if (activeRun) {
+    const pid = activeRun.pid;
+    const result = await killProcessTree(pid);
+    if (result.code === 0 || /not found|찾을 수 없/i.test(result.output)) killedPids.push(pid);
+    else await appendMonitorLog(`Stop Run: taskkill /PID ${pid} reported: ${result.output || `exit ${result.code}`}`);
+    activeRun = null;
+  }
+
+  const task = await getTaskSummaryUncached();
+  const taskWasRunning = Boolean(task?.exists && task.state === "Running");
+  if (taskWasRunning) {
+    await runPowerShell(["-Command", `Stop-ScheduledTask -TaskName '${taskName.replaceAll("'", "''")}'`]);
+  }
+
+  const strays = await findBuildProcessIds();
+  for (const pid of strays) {
+    if (killedPids.includes(pid)) continue;
+    await killProcessTree(pid);
+    killedPids.push(pid);
+  }
+  ttlCache.delete("taskSummary");
+
+  if (!killedPids.length && !taskWasRunning) {
+    return { ok: false, error: "실행 중인 빌드 프로세스를 찾을 수 없습니다." };
+  }
+  await appendMonitorLog(`Stop Run requested: killed process tree(s) PID ${killedPids.join(", ") || "-"}`);
+  return { ok: true, pids: killedPids, message: `빌드 취소됨 — 프로세스 트리 종료 (PID ${killedPids.join(", ") || "-"})` };
 }
 
 async function serveStatic(req, res) {
@@ -629,7 +883,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/run-now" && req.method === "POST") return sendJson(res, 200, await startRun(await readBody(req)));
     if (url.pathname === "/api/register-task" && req.method === "POST") return sendJson(res, 200, await registerTask(await readBody(req)));
     if (url.pathname === "/api/start-task" && req.method === "POST") return sendJson(res, 200, await startScheduledTask());
-    if (url.pathname === "/api/stop" && req.method === "POST") return sendJson(res, 200, stopActiveRun());
+    if (url.pathname === "/api/stop" && req.method === "POST") return sendJson(res, 200, await stopRun());
     if (url.pathname === "/api/repos" && req.method === "GET") return sendJson(res, 200, await repoRegistry.load());
     if (url.pathname === "/api/repos" && req.method === "POST") {
       const body = await readBody(req);
@@ -684,6 +938,62 @@ const server = http.createServer(async (req, res) => {
       ws.runOptions = { ...DEFAULT_RUN_OPTIONS, ...body };
       await workspace.save();
       return sendJson(res, 200, ws.runOptions);
+    }
+    if (url.pathname === "/api/ai/config" && req.method === "GET") {
+      const ws = await workspace.load();
+      return sendJson(res, 200, sanitizeAiConfig(ws.ai || { ...DEFAULT_AI_CONFIG, providers: structuredClone(DEFAULT_AI_PROVIDERS) }));
+    }
+    if (url.pathname === "/api/ai/config" && req.method === "POST") {
+      const body = await readBody(req);
+      const ws = await workspace.load();
+      ws.ai = ws.ai || { ...DEFAULT_AI_CONFIG };
+      if (typeof body.autoDiagnose === "boolean") ws.ai.autoDiagnose = body.autoDiagnose;
+      if (typeof body.maxTokens === "number") ws.ai.maxTokens = Math.max(4000, Math.min(400000, body.maxTokens));
+      if (body.primaryProviderId) ws.ai.primaryProviderId = body.primaryProviderId;
+      if (body.secondaryProviderId !== undefined) ws.ai.secondaryProviderId = body.secondaryProviderId;
+      if (body.providers && typeof body.providers === "object") {
+        for (const id of Object.keys(DEFAULT_AI_PROVIDERS)) {
+          const incoming = body.providers[id] || {};
+          const base = ws.ai.providers?.[id] || { ...DEFAULT_AI_PROVIDERS[id] };
+          ws.ai.providers[id] = {
+            ...base,
+            enabled: id === "claude" ? true : Boolean(incoming.enabled),
+            // "[REDACTED]" is the sanitized placeholder the GET route hands the browser —
+            // treat it as "keep the stored key" so a re-save never destroys the real key.
+            apiKey: incoming.apiKey === "[REDACTED]" ? base.apiKey
+              : typeof incoming.apiKey === "string" ? incoming.apiKey : base.apiKey,
+            baseUrl: typeof incoming.baseUrl === "string" ? incoming.baseUrl : base.baseUrl,
+            model: typeof incoming.model === "string" ? incoming.model : base.model,
+            cliPath: typeof incoming.cliPath === "string" ? incoming.cliPath : base.cliPath
+          };
+        }
+      }
+      await workspace.save();
+      return sendJson(res, 200, sanitizeAiConfig(ws.ai));
+    }
+    if (url.pathname === "/api/ai/test" && req.method === "POST") {
+      const body = await readBody(req);
+      const id = body.providerId;
+      if (!id) return sendJson(res, 200, { ok: false, error: "providerId is required" });
+      return sendJson(res, 200, await testAiProvider(id, body.config));
+    }
+    if (url.pathname === "/api/ai/models" && req.method === "POST") {
+      const body = await readBody(req) || {};
+      if (!body.providerId) return sendJson(res, 200, { ok: false, error: "providerId is required" });
+      return sendJson(res, 200, await listAiProviderModels(body.providerId, body.config));
+    }
+    if (url.pathname === "/api/ai/diagnose" && req.method === "POST") {
+      const body = await readBody(req) || {};
+      const logName = body.logName || "latest";
+      let targetLogName = logName;
+      if (logName === "latest") {
+        const failedRuns = (lastPipelineStatus.runs || []).filter((r) => r.result === "failed");
+        const run = failedRuns[0] || lastPipelineStatus.runs?.[0];
+        if (!run) return sendJson(res, 200, { ok: false, error: "No run logs available for diagnosis" });
+        targetLogName = run.logName;
+      }
+      const result = await performDiagnosis(targetLogName);
+      return sendJson(res, 200, { ok: result.ok, ...result, ...result.diagnosis, error: result.error });
     }
     if (url.pathname === "/api/deploy" && req.method === "GET") {
       const [state, ws] = await Promise.all([stateStore.load(), workspace.load()]);

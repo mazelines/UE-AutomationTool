@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
     [string]$RepoRoot,
     [string]$Branch,
@@ -125,6 +125,9 @@ if (-not $PSBoundParameters.ContainsKey('WithDDC') -and $config['Build.WithDDC']
 if ($NoDDC) {
     $WithDDC = $false
 }
+# Logging.Verbose (UI "Verbose Log" toggle) drives RunUAT/BuildGraph -Verbose and extra console
+# detail. Defaults to true to match the historical saved value and aid first-run debugging.
+$Verbose = if ($config['Logging.Verbose']) { [System.Convert]::ToBoolean($config['Logging.Verbose']) } else { $true }
 
 $logDirectory = Join-Path $RepoRoot 'LocalBuilds\AutomationLogs'
 New-Item -ItemType Directory -Force -Path $logDirectory | Out-Null
@@ -140,6 +143,7 @@ try {
         Write-Host "Upstream: $UpstreamRemote -> $UpstreamUrl ($UpstreamBranch)"
     }
     Write-Host "Installed build output: $BuiltDirectory"
+    Write-Host "Verbose: $($Verbose.ToString().ToLowerInvariant())"
     Write-Host "Log: $logPath"
 
     Push-Location $RepoRoot
@@ -240,6 +244,17 @@ try {
         Write-Host 'Skipping upstream merge because -SkipUpstreamSync was provided.'
     }
 
+    # ponytail: a conflict "resolved" by committing the markers verbatim (NessUObjectBindings.cpp,
+    # 2026-07-24) survives every later merge and is only caught by the compiler ~90 minutes in.
+    # Scan tracked text files before push/build so a bad merge fails the run in seconds — and never
+    # reaches origin. Runs even with -SkipUpstreamSync: manual merges break builds just the same.
+    Invoke-LoggedStep 'Check for merge conflict markers' {
+        $markerFiles = @(& git grep -l -E "^(<{7}|>{7}) " -- "*.cpp" "*.h" "*.hpp" "*.c" "*.cc" "*.cxx" "*.inl" "*.cs" "*.usf" "*.ush" "*.verse" "*.py" "*.bat" "*.ps1" "*.xml" "*.ini" "*.json" "*.md" "*.txt" 2>$null)
+        if ($markerFiles.Count -gt 0) {
+            throw "Unresolved merge conflict markers found in $($markerFiles.Count) file(s). Resolve them before building:`n$($markerFiles -join [Environment]::NewLine)"
+        }
+    }
+
     if (-not $SkipPushOrigin) {
         Invoke-LoggedStep 'Push synced branch to fork origin' {
             Invoke-Git push $OriginRemote "${Branch}:${Branch}"
@@ -304,9 +319,15 @@ try {
         if (-not $NoClean) {
             $buildArgs += '-clean'
         }
+        if ($Verbose) {
+            $buildArgs += '-Verbose'
+        }
 
         $buildOutputLog = Join-Path $logDirectory ("InstalledBuild-{0}-output.log" -f $buildTimestamp)
         Write-Host "Build output log: $buildOutputLog"
+        if ($Verbose) {
+            Write-Host "BuildGraph args: $($buildArgs -join ' ')"
+        }
         # ponytail: cmd-level redirect — a PS 5.1 transcript misses native output when stdout is piped, and an in-process 2>&1 wraps stderr lines into ErrorRecords under ErrorActionPreference=Stop.
         $flatArgs = ($buildArgs | ForEach-Object { if ($_ -match '\s' -and $_ -notlike '*"*') { "`"$_`"" } else { $_ } }) -join ' '
         & cmd.exe /d /s /c "`"$uat`" $flatArgs > `"$buildOutputLog`" 2>&1 < NUL"
@@ -330,6 +351,7 @@ try {
             $env:GAME_CONFIGURATIONS = "$($config['Build.GameConfigurations'])"
             $env:HOST_PLATFORM_EDITOR_ONLY = "$($config['Build.HostPlatformEditorOnly'])"
             $env:WITH_DDC = $WithDDC.ToString().ToLowerInvariant()
+            $env:VERBOSE = $Verbose.ToString().ToLowerInvariant()
             $env:BUILD_LOG_DIR = if ($config['Paths.LogDirectory']) { $config['Paths.LogDirectory'] } else { 'LocalBuilds\Logs' }
 
             & cmd.exe /d /s /c "`"$postBuild`" < NUL"

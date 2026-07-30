@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { api } from "./api.js";
 import { Toast, DirPicker, EmptyState } from "./components.jsx";
 import {
-  IconLogo, IconOverview, IconPipeline, IconDeploy, IconLogs, IconBell,
+  IconLogo, IconOverview, IconPipeline, IconDeploy, IconLogs, IconBell, IconSpark,
   IconRepoTree, IconBranch, IconSun, IconMoon
 } from "./icons.jsx";
 import OverviewView from "./views/Overview.jsx";
@@ -10,6 +10,7 @@ import RunPipelineView from "./views/RunPipeline.jsx";
 import DeployView from "./views/Deploy.jsx";
 import LogsView from "./views/Logs.jsx";
 import AlertsView from "./views/Alerts.jsx";
+import AIDiagnosticsView from "./views/AIDiagnostics.jsx";
 
 const themeStorageKey = "ue6-monitor-theme";
 
@@ -29,6 +30,7 @@ const NAV = [
   { id: "pipeline", label: "Run & Pipeline", Icon: IconPipeline },
   { id: "deploy", label: "Deploy", Icon: IconDeploy },
   { id: "logs", label: "Logs", Icon: IconLogs },
+  { id: "ai", label: "AI Diagnostics", Icon: IconSpark },
   { id: "alerts", label: "Alerts", Icon: IconBell }
 ];
 
@@ -214,10 +216,7 @@ export default function App() {
       runAction("Run (NoClean)", () =>
         api("/api/run-now", { method: "POST", body: JSON.stringify({ ...options, noClean: true }) }), "info"),
     stop: () =>
-      runAction("Stop", async () => {
-        const result = await api("/api/stop", { method: "POST" });
-        return result.ok ? { message: `프로세스 트리 종료됨 (PID ${result.pid})` } : result;
-      }, "warning"),
+      runAction("Stop", () => api("/api/stop", { method: "POST" }), "warning"),
     register: () =>
       runAction("Register Task", () =>
         api("/api/register-task", { method: "POST", body: JSON.stringify(options) })),
@@ -344,6 +343,7 @@ export default function App() {
               {view === "pipeline" && <RunPipelineView {...shared} />}
               {view === "deploy" && <DeployView {...shared} />}
               {view === "logs" && <LogsView {...shared} />}
+              {view === "ai" && <AIDiagnosticsView {...shared} />}
               {view === "alerts" && <AlertsView {...shared} />}
             </>
           )}

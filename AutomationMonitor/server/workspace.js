@@ -22,6 +22,115 @@ export const DEFAULT_RUN_OPTIONS = {
 
 export const DEFAULT_THRESHOLDS = { diskFreePct: 15, upstreamCommits: 50, buildHours: 6 };
 
+// AI provider configuration defaults. Claude Code uses the locally installed `claude` CLI
+// and reuses its existing OAuth session (no API key required). Other providers are OpenAI-
+// compatible and require an API key and base URL.
+export const DEFAULT_AI_PROVIDERS = {
+  claude: {
+    id: "claude",
+    name: "Claude Code",
+    kind: "claude-cli",
+    enabled: true,
+    // Path to the claude executable. Empty means auto-detect from PATH.
+    cliPath: "",
+    // Model passed as `--model <id>` (alias like "sonnet"/"opus"/"haiku" or a full model ID).
+    // Empty means the CLI's own default.
+    model: "",
+    // Non-interactive CLI flags used when invoking Claude for diagnosis. "plan" keeps the
+    // session read-only (log analysis needs no tools) and, unlike bypassPermissions, is not
+    // blocked by managed policy. The prompt itself is delivered via stdin (see ai/claude.js).
+    flags: ["--permission-mode", "plan", "--no-session-persistence", "--output-format", "json"]
+  },
+  kimi: {
+    id: "kimi",
+    name: "Kimi Code",
+    kind: "openai-compatible",
+    enabled: false,
+    apiKey: "",
+    baseUrl: "https://api.kimi.com/coding/v1",
+    model: "",
+    modelHint: "kimi-k2-0711"
+  }
+};
+
+export const DEFAULT_AI_CONFIG = {
+  version: 1,
+  // Auto-run AI diagnosis when a build fails.
+  autoDiagnose: false,
+  // Max tokens per provider call (approx budget cap). Long logs are truncated to fit.
+  maxTokens: 120000,
+  // Primary and secondary provider IDs. Secondary is used when primary fails.
+  primaryProviderId: "claude",
+  secondaryProviderId: "",
+  // Stored AI diagnoses keyed by run log name.
+  diagnostics: {}
+};
+
+// Defaults for the "Install Build Config" form (RunPipeline.jsx). Mirror the fallbacks already
+// used in server/deploy.js and index.js so values stay consistent. Build-target toggles match
+// InstalledEngineBuild.xml's sane defaults: a full host-platform build (not editor-only) with
+// DDC generation and no client/server targets. Run/Source/Version/Distribution stay user/INI-owned.
+export const DEFAULT_BUILD_CONFIG = {
+  Paths: { OutputDirectory: "LocalBuilds\\Engine", LogDirectory: "LocalBuilds\\Logs" },
+  Build: {
+    TargetPlatform: "Win64",
+    GameConfigurations: "Shipping;Development",
+    HostPlatformEditorOnly: "false",
+    WithDDC: "true",
+    WithClient: "false",
+    WithServer: "false"
+  },
+  PostBuild: { WaitTimeout: "10" },
+  Logging: { Verbose: "true", LogRetentionDays: "30" }
+};
+
+// Fill empty build-config keys with defaults without clobbering user values. Mutates ws.build.
+function applyBuildDefaults(ws) {
+  ws.build = ws.build || {};
+  for (const [section, keys] of Object.entries(DEFAULT_BUILD_CONFIG)) {
+    ws.build[section] = { ...ws.build[section] };
+    for (const [key, value] of Object.entries(keys)) {
+      if (ws.build[section][key] === undefined || ws.build[section][key] === "") {
+        ws.build[section][key] = value;
+      }
+    }
+  }
+  return ws;
+}
+
+// Fill empty AI config/provider keys without clobbering user values. Mutates ws.ai.
+function applyAiDefaults(ws) {
+  ws.ai = ws.ai ? { ...DEFAULT_AI_CONFIG, ...ws.ai } : { ...DEFAULT_AI_CONFIG };
+  ws.ai.providers = ws.ai.providers ? { ...ws.ai.providers } : {};
+  for (const [id, defaults] of Object.entries(DEFAULT_AI_PROVIDERS)) {
+    const user = ws.ai.providers[id] || {};
+    ws.ai.providers[id] = { ...defaults, ...user };
+    // Ensure all default keys exist even if user partially saved the object.
+    for (const key of Object.keys(defaults)) {
+      if (ws.ai.providers[id][key] === undefined) ws.ai.providers[id][key] = defaults[key];
+    }
+  }
+  // Drop providers removed from the registry (e.g. modelark, zai) out of saved workspaces
+  // so they never enter the diagnosis order, and reset dangling primary/secondary picks.
+  for (const id of Object.keys(ws.ai.providers)) {
+    if (!DEFAULT_AI_PROVIDERS[id]) delete ws.ai.providers[id];
+  }
+  if (ws.ai.primaryProviderId && !ws.ai.providers[ws.ai.primaryProviderId]) {
+    ws.ai.primaryProviderId = DEFAULT_AI_CONFIG.primaryProviderId;
+  }
+  if (ws.ai.secondaryProviderId && !ws.ai.providers[ws.ai.secondaryProviderId]) {
+    ws.ai.secondaryProviderId = "";
+  }
+  // Migrate workspaces saved with the original bypassPermissions flags to the current
+  // plan-mode defaults (the old default array is never a deliberate user choice).
+  const oldDefaultFlags = ["--permission-mode", "bypassPermissions", "--no-session-persistence", "--output-format", "json"];
+  const claude = ws.ai.providers.claude;
+  if (claude && JSON.stringify(claude.flags) === JSON.stringify(oldDefaultFlags)) {
+    claude.flags = [...DEFAULT_AI_PROVIDERS.claude.flags];
+  }
+  return ws;
+}
+
 // Horde is not used in this pipeline (user decision 2026-07-13); P4 stays a visible stub until configured.
 function defaultChannels(hostname) {
   return [
@@ -65,11 +174,14 @@ export function createWorkspace({ filePath, iniPath, statePath, hostname }) {
       build: {},
       runOptions: { ...DEFAULT_RUN_OPTIONS },
       deploy: { targets: defaultTargets(), auto: { enabled: false, targetId: "smb" }, format: "7z" },
-      alerts: { channels: defaultChannels(hostname), thresholds: { ...DEFAULT_THRESHOLDS } }
+      alerts: { channels: defaultChannels(hostname), thresholds: { ...DEFAULT_THRESHOLDS } },
+      ai: { ...DEFAULT_AI_CONFIG, providers: structuredClone(DEFAULT_AI_PROVIDERS) }
     };
     try {
       workspace.build = parseIni(await fs.readFile(iniPath, "utf8"));
     } catch {}
+    applyBuildDefaults(workspace);
+    applyAiDefaults(workspace);
     try {
       const state = JSON.parse(await fs.readFile(statePath, "utf8"));
       if (Array.isArray(state.channels) && state.channels.length) workspace.alerts.channels = dropHorde(state.channels);
@@ -85,6 +197,8 @@ export function createWorkspace({ filePath, iniPath, statePath, hostname }) {
     if (cache && stat && stat.mtimeMs === cacheMtime) return cache;
     if (stat) {
       cache = JSON.parse(await fs.readFile(filePath, "utf8"));
+      applyBuildDefaults(cache);
+      applyAiDefaults(cache);
       cacheMtime = stat.mtimeMs;
       return cache;
     }
@@ -99,5 +213,5 @@ export function createWorkspace({ filePath, iniPath, statePath, hostname }) {
     try { cacheMtime = fssync.statSync(filePath).mtimeMs; } catch {}
   }
 
-  return { load, save };
+  return { load, save, applyAiDefaults };
 }

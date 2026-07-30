@@ -8,6 +8,7 @@ export const STAGE_NAMES = [
   "Fetch origin and upstream",
   "Checkout build branch",
   "Merge upstream into local branch",
+  "Check for merge conflict markers",
   "Push synced branch to fork origin",
   "Sync Unreal dependencies",
   "Generate project files",
@@ -17,7 +18,7 @@ export const STAGE_NAMES = [
 ];
 
 // Relative weight of each stage in the overall progress bar (build dominates).
-const STAGE_WEIGHTS = [4, 2, 8, 12, 3, 4, 8, 20, 3, 160, 6];
+const STAGE_WEIGHTS = [4, 2, 8, 12, 3, 1, 4, 8, 20, 3, 160, 6];
 const TOTAL_WEIGHT = STAGE_WEIGHTS.reduce((a, b) => a + b, 0);
 const BUILD_STAGE = "Build Win64 installed engine";
 
@@ -125,7 +126,10 @@ async function readBuildExit(logRoot, buildLogName, tailFile) {
 
 const finishedRuns = new Map();
 
-export async function buildPipelineStatus({ logRoot, logs, tailFile, isMonitorRunActive, isTaskRunning }) {
+export async function buildPipelineStatus({ logRoot, logs, tailFile, isMonitorRunActive, isTaskRunning, stoppedAt }) {
+  // A user-requested Stop Run marks every run started before it as cancelled, so the UI
+  // shows "aborted" right away instead of waiting out the recentlyTouched grace window.
+  const stopCutoff = stoppedAt ? Date.parse(stoppedAt) : null;
   const wrapperLogs = logs.filter((log) => log.name.startsWith("SyncAndBuildInstalled-"));
   const monitorMap = await readParsed(path.join(logRoot, "..", "AutomationMonitor", "monitor.log"), parseMonitorLog) || new Map();
 
@@ -147,9 +151,11 @@ export async function buildPipelineStatus({ logRoot, logs, tailFile, isMonitorRu
     let result;
     let reason = "";
     if (!parsed.ended) {
-      const running = isLatest && (isMonitorRunActive || isTaskRunning || recentlyTouched);
+      const startedMs = parsed.startedAt ? Date.parse(parsed.startedAt) : null;
+      const stopApplies = stopCutoff !== null && (startedMs === null || startedMs <= stopCutoff);
+      const running = !stopApplies && isLatest && (isMonitorRunActive || isTaskRunning || recentlyTouched);
       result = running ? "running" : "aborted";
-      if (result === "aborted") reason = "Aborted — process terminated";
+      if (result === "aborted") reason = stopApplies ? "Cancelled by user (Stop Run)" : "Aborted — process terminated";
     } else if (monitorHit) {
       result = monitorHit.exitCode === 0 ? "success" : "failed";
     } else {

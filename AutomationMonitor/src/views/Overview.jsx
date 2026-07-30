@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { formatClock, formatDate, parseDate, timeAgo } from "../api.js";
 import { Card, EmptyState, RunButtons } from "../components.jsx";
-import { IconClock } from "../icons.jsx";
+import { IconClock, IconSpark } from "../icons.jsx";
 import { formatDur, runDotClass, summarizeRuns } from "../pipeline.js";
 
 function useNow(active) {
@@ -44,6 +44,7 @@ export default function OverviewView({ status, isRunning, busy, actions, setView
   const task = status?.task;
   const pipeline = status?.pipeline;
   const runs = status?.runs || [];
+  const diagnostics = status?.ai?.diagnostics || {};
   const disk = status?.disk;
   const running = pipeline?.result === "running";
   const now = useNow(running);
@@ -189,25 +190,63 @@ export default function OverviewView({ status, isRunning, busy, actions, setView
           </Card>
 
           <Card title="Recent Runs" action={<button className="link-btn" onClick={() => setView("logs")}>View logs →</button>}>
-            <div className="table-head" style={{ gridTemplateColumns: "20px minmax(0,1.4fr) 1fr 90px 80px" }}>
-              <span /><span>Build</span><span>Result</span><span>Duration</span><span>Mode</span>
+            <div className="table-head" style={{ gridTemplateColumns: "20px minmax(0,1.4fr) 1fr 90px 80px 90px" }}>
+              <span /><span>Build</span><span>Result</span><span>Duration</span><span>Mode</span><span>AI 진단</span>
             </div>
-            {runs.slice(0, 6).map((run) => (
-              <div key={run.id} className="table-row" style={{ gridTemplateColumns: "20px minmax(0,1.4fr) 1fr 90px 80px", cursor: "pointer" }} onClick={() => setView("logs")}>
-                <span className={`dot ${runDotClass(run.result)}`} />
-                <div style={{ minWidth: 0 }}>
-                  <div className="cell-mono">{run.id}</div>
-                  <div className="cell-sub">{formatDate(run.startedAt)}</div>
+            {runs.slice(0, 6).map((run) => {
+              const diag = diagnostics[run.logName];
+              return (
+                <div key={run.id} className="table-row" style={{ gridTemplateColumns: "20px minmax(0,1.4fr) 1fr 90px 80px 90px", cursor: "pointer" }} onClick={() => setView("logs")}>
+                  <span className={`dot ${runDotClass(run.result)}`} />
+                  <div style={{ minWidth: 0 }}>
+                    <div className="cell-mono">{run.id}</div>
+                    <div className="cell-sub">{formatDate(run.startedAt)}</div>
+                  </div>
+                  <span style={{ fontSize: 12.5, color: run.result === "failed" ? "var(--danger)" : run.result === "aborted" ? "var(--warn)" : "var(--text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {run.reason}
+                  </span>
+                  <span className="cell-mono-dim">{formatDur(run.durationSeconds)}</span>
+                  <span className="cell-dim">{run.mode}</span>
+                  <div style={{ fontSize: 11, display: "flex", alignItems: "center", gap: 5 }}>
+                    {run.result === "failed" && diag ? (
+                      <>
+                        <span style={{ color: diag.ok ? "var(--success)" : "var(--danger)" }}>{diag.ok ? "완료" : "실패"}</span>
+                        {diag.providerName && <span className="cell-dim">· {diag.providerName}</span>}
+                      </>
+                    ) : <span className="cell-dim">—</span>}
+                  </div>
                 </div>
-                <span style={{ fontSize: 12.5, color: run.result === "failed" ? "var(--danger)" : run.result === "aborted" ? "var(--warn)" : "var(--text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {run.reason}
-                </span>
-                <span className="cell-mono-dim">{formatDur(run.durationSeconds)}</span>
-                <span className="cell-dim">{run.mode}</span>
-              </div>
-            ))}
+              );
+            })}
             {runs.length === 0 && <EmptyState>런 기록이 없습니다.</EmptyState>}
           </Card>
+
+          {runs.slice(0, 3).filter((run) => run.result === "failed").map((run) => {
+            const diag = diagnostics[run.logName];
+            if (!diag?.ok) return null;
+            return (
+              <Card key={run.id} title={<><IconSpark /> AI 진단 · #{run.id}</>}>
+                <div style={{ padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text)" }}>{diag.summary}</div>
+                  <div style={{ fontSize: 11.5, color: "var(--text-dim)", lineHeight: 1.45 }}>
+                    <b>원인:</b> {diag.rootCause}
+                  </div>
+                  {Array.isArray(diag.affectedFiles) && diag.affectedFiles.length > 0 && (
+                    <div style={{ fontSize: 11, color: "var(--text-mute)", lineHeight: 1.4 }}>
+                      <b>파일:</b> {diag.affectedFiles.join(", ")}
+                    </div>
+                  )}
+                  <div style={{ fontSize: 11.5, color: "var(--text-dim)", lineHeight: 1.45, borderTop: "1px solid var(--border)", paddingTop: 8 }}>
+                    <b>권장 해결:</b> {diag.recommendedFix}
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-mute)", marginTop: 4 }}>
+                    <span>Provider: {diag.providerName || diag.providerId}</span>
+                    <span>신뢰도: {diag.confidence}</span>
+                  </div>
+                </div>
+              </Card>
+            );
+          })}
         </div>
 
         <div className="col-stack">

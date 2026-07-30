@@ -83,6 +83,12 @@ export const IconMoon = () => (
   </Svg>
 );
 
+export const IconSpark = () => (
+  <Svg>
+    <path d="M12 2l2.4 7.2L22 12l-7.6 2.8L12 22l-2.4-7.2L2 12l7.6-2.8L12 2z" />
+  </Svg>
+);
+
 export const IconClock = ({ stroke = "var(--success)" }) => (
   <Svg size={18} stroke={stroke}>
     <circle cx="12" cy="12" r="9" />
