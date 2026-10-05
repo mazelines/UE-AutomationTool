@@ -502,7 +502,7 @@ function sanitizeAiConfig(ai) {
       id: p.id,
       name: p.name,
       kind: p.kind,
-      enabled: id === "claude" ? true : Boolean(p.enabled),
+      enabled: id === "codex" ? true : Boolean(p.enabled),
       baseUrl: p.baseUrl || "",
       model: p.model || "",
       modelHint: p.modelHint || "",
@@ -957,7 +957,7 @@ const server = http.createServer(async (req, res) => {
           const base = ws.ai.providers?.[id] || { ...DEFAULT_AI_PROVIDERS[id] };
           ws.ai.providers[id] = {
             ...base,
-            enabled: id === "claude" ? true : Boolean(incoming.enabled),
+            enabled: id === "codex" ? true : Boolean(incoming.enabled),
             // "[REDACTED]" is the sanitized placeholder the GET route hands the browser —
             // treat it as "keep the stored key" so a re-save never destroys the real key.
             apiKey: incoming.apiKey === "[REDACTED]" ? base.apiKey

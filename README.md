@@ -13,13 +13,14 @@ Unreal Engine 소스 저장소의 **nightly upstream sync**와 **installed-engin
 | Run & Pipeline | Run 옵션, `install_build_config.ini` 편집, 즉시 실행·스케줄 등록 |
 | Deploy | installed-engine 아티팩트 목록, SMB 타깃 압축 배포, 자동 배포, 배포 이력 |
 | Logs | 빌드·모니터 로그 tail, 필터, 다운로드 |
+| AI Diagnostics | 빌드 실패 AI 진단 (Codex CLI·OpenAI 호환 API), 자동/수동 실행, 결과 열람 |
 | Alerts | 인시던트 피드, 알림 채널 설정, 트리거 규칙 |
 
 ## 스크린샷
 
 ### Overview
 
-대시보드에서 파이프라인 idle/running 상태, 최근 실행, 디스크 여유, 스케줄 작업, 활성 알림을 한눈에 확인합니다.
+대시보드에서 파이프라인 idle/running 상태, 최근 실행, 디스크 여유, 스케줄 작업, 활성 알림을 한눈에 확인합니다. 실패한 빌드에 AI 진단 결과가 있으면 최근 실행 테이블의 진단 상태와 요약 카드(원인·영향 파일·권장 해결)도 함께 표시합니다.
 
 ![Overview](images/1.png)
 
@@ -31,7 +32,7 @@ Clean/NoClean 실행, 일일 스케줄 시각, upstream/deps/project files/DDC �
 
 ### Run & Pipeline — Install Build Config
 
-브랜치·버전·타깃 플랫폼, upstream remote, 빌드 타깃(Editor/DDC/Client/Server), 출력·로그 경로를 UI에서 편집하고 `install_build_config.ini`에 반영합니다.
+브랜치·버전·타깃 플랫폼, upstream remote, 빌드 타깃(Editor/DDC/Client/Server), 출력·로그 경로를 UI에서 편집하고 선택한 저장소의 `LocalBuilds/AutomationMonitor/workspace.json`(`build` 섹션)에 반영합니다. **Verbose Log** 토글(`Logging.Verbose`, 기본 on)은 RunUAT/BuildGraph에 `-Verbose`를 전달하고 BuildGraph 인자를 콘솔에 출력해 디버깅을 돕습니다.
 
 ![Install Build Config](images/3.png)
 
@@ -47,6 +48,18 @@ Clean/NoClean 실행, 일일 스케줄 시각, upstream/deps/project files/DDC �
 
 ![Alerts](images/5.png)
 
+## AI 진단
+
+빌드가 실패하면 파이프라인 래퍼 로그와 UBT 빌드 출력 로그 tail을 AI 프로바이더에 보내 **요약·근본 원인·영향 파일·권장 해결책·신뢰도**를 JSON으로 받아 보여줍니다. AI Diagnostics 화면에서 설정하고, Overview에서 결과를 확인합니다.
+
+- **프로바이더**
+  - **Codex CLI** (기본): 로컬에 설치된 `codex` CLI의 ChatGPT OAuth 세션(`codex login`)을 재사용하므로 API 키가 필요 없습니다. `--sandbox read-only`로 비대화형 실행하며, CLI 경로와 모델을 지정할 수 있습니다.
+  - **Z.AI International**: OpenAI 호환 API. API 키와 base URL이 필요하며 연결 테스트 후 모델 목록을 불러올 수 있습니다.
+- **Primary/Secondary**: primary가 실패하면 secondary, 그 다음 활성화된 프로바이더 순으로 폴백합니다.
+- **자동 진단**: `autoDiagnose`를 켜면 빌드 실패를 감지할 때마다 자동으로 진단합니다 (기본 off). 수동 실행은 어느 때나 가능하며 기본 대상은 최근 실패 run입니다.
+- **토큰 예산**: `maxTokens`(기본 120,000)에 맞춰 긴 로그는 앞부분(맥락)과 뒷부분(에러)을 남기고 중간을 잘라 보냅니다.
+- **API 키 보호**: 저장된 키는 조회 시 `[REDACTED]`로 마스킹되며, 재저장해도 기존 키가 유지됩니다. 진단 결과는 `workspace.json`의 `ai.diagnostics`에 run 로그 이름별로 저장됩니다.
+
 ## 요구 사항
 
 - Windows 10/11
@@ -54,6 +67,7 @@ Clean/NoClean 실행, 일일 스케줄 시각, upstream/deps/project files/DDC �
 - Git, PowerShell 5.1+
 - [7-Zip](https://www.7-zip.org/) — 배포 압축용. `C:\Program Files\7-Zip\7z.exe`를 먼저 찾고, 없으면 `PATH`의 `7z`를 사용합니다.
 - 모니터링 대상: 로컬에 클론된 Unreal Engine 저장소 (`.git` 포함) — 저장소 선택기에서 등록
+- (선택) AI 진단 프로바이더: 로컬 Codex CLI 로그인 세션(`codex login`), 또는 OpenAI 호환 API 키 — 없으면 AI 진단만 비활성
 - 빌드 로그: `<선택한 저장소>/LocalBuilds/AutomationLogs/`
 - 모니터 로그·상태·설정: `<선택한 저장소>/LocalBuilds/AutomationMonitor/`
 
@@ -114,7 +128,7 @@ AutomationMonitor는 `Automation/`(파이프라인 스크립트)와 함께 자�
 ```
 Automation/          # 파이프라인 스크립트 (SyncAndBuildInstalled.ps1 등) — 도구 소유, 대상 저장소와 무관
 AutomationMonitor/
-├── server/          # Node HTTP API (상태 수집, 실행, 배포, 저장소 레지스트리)
+├── server/          # Node HTTP API (상태 수집, 실행, 배포, 저장소 레지스트리, AI 진단)
 ├── src/             # React UI (Vite)
 ├── repos.json       # 등록된 저장소 목록·활성 선택 (gitignored)
 ├── dist/            # 운영 빌드 산출물 (vite build)
@@ -135,12 +149,13 @@ AutomationMonitor/
 3. Fetch origin and upstream  
 4. Checkout build branch  
 5. Merge upstream into local branch  
-6. Push synced branch to fork origin  
-7. Sync Unreal dependencies  
-8. Generate project files  
-9. Install build pre-processing  
-10. Build Win64 installed engine  
-11. Install build post-processing  
+6. Check for merge conflict markers (컨플릭트 마커를 통째로 커밋한 "해결"이 push·빌드까지 진행되는 것을 사전 차단 — 수 초 만에 실패시키며 `-SkipUpstreamSync` 시에도 항상 실행)  
+7. Push synced branch to fork origin  
+8. Sync Unreal dependencies  
+9. Generate project files  
+10. Install build pre-processing  
+11. Build Win64 installed engine  
+12. Install build post-processing  
 
 ## 설정 파일
 
@@ -157,6 +172,7 @@ AutomationMonitor/
 | `deploy.format` | 배포 압축 형식 — `7z`(기본) 또는 `zip` |
 | `alerts.channels` | Slack, Email, Windows Toast on/off |
 | `alerts.thresholds` | 디스크 %, upstream 커밋 수, 빌드 시간(h) |
+| `ai` | AI 진단 — 프로바이더 설정(Codex CLI·OpenAI 호환), primary/secondary, `autoDiagnose`, `maxTokens`, run별 진단 결과(`diagnostics`) |
 
 ### 환경 변수
 
@@ -171,12 +187,16 @@ AutomationMonitor/
 |--------|------|------|
 | GET | `/api/status` | 전체 상태 (Git, 파이프라인, 디스크, 알림, 로그 목록) |
 | POST | `/api/run-now` | 즉시 빌드 실행 |
-| POST | `/api/stop` | 모니터가 시작한 프로세스 트리 종료 |
+| POST | `/api/stop` | 실행 중인 빌드 종료 (모니터 실행·스케줄 작업 실행 모두) |
 | POST | `/api/register-task` | 야간 스케줄 작업 등록 |
 | POST | `/api/start-task` | 등록된 스케줄 작업 즉시 시작 |
 | GET/POST | `/api/install-config` | 빌드 INI 읽기/쓰기 |
 | POST | `/api/upstream/register` | upstream remote 추가 및 fetch |
 | GET | `/api/logs/:name` | 로그 tail |
+| GET/POST | `/api/ai/config` | AI 프로바이더·자동 진단 설정 (조회 시 API 키는 `[REDACTED]` 마스킹) |
+| POST | `/api/ai/test` | 프로바이더 연결 테스트 (`{ providerId, config? }`) |
+| POST | `/api/ai/models` | 프로바이더 모델 목록 조회 (`{ providerId, config? }`) |
+| POST | `/api/ai/diagnose` | 빌드 진단 실행 (`{ logName }`, 생략 시 최근 실패 run) |
 | GET | `/api/deploy` | 아티팩트·타깃·자동 배포 설정·압축 형식·이력 |
 | POST | `/api/deploy/start` | SMB 압축 배포 시작 |
 | POST | `/api/deploy/format` | 압축 형식 저장 (`{ format: "7z" \| "zip" }`) |
@@ -190,10 +210,11 @@ AutomationMonitor/
 
 - **Run (Clean)**: `-NoClean` 없이 전체 파이프라인 실행.
 - **Run (NoClean)**: 증분 빌드용 `-NoClean` 전달.
-- **Stop**: `taskkill /T /F`로 PowerShell 하위 UAT·UBT 프로세스까지 종료.
+- **Stop**: 모니터가 시작한 실행은 `taskkill /PID <pid> /T /F`로 PowerShell 하위 UAT·UBT까지 트리 종료하고, 스케줄 작업이 시작한 실행은 `Stop-ScheduledTask` 후 CIM으로 해당 PowerShell 트리를 찾아 종료합니다. Stop 시점 이전에 시작된 run은 즉시 "Cancelled by user (Stop Run)"로 표시됩니다.
 - **Add & Fetch Upstream**: Epic 원격 등록 후 지정 브랜치만 fetch (HTTP/1.1 강제).
 - **Deploy**: `Engine.<format>.partial`로 먼저 압축한 뒤 성공했을 때만 `Engine.<format>`으로 교체하므로, 실패한 배포가 기존 아카이브를 덮어쓰지 않습니다.
 - **자동 배포**: 켠 시점의 CURRENT 아티팩트를 기준선으로 잡아 과거 빌드를 다시 배포하지 않습니다. 빌드당 한 번만 시도하며, 실패하면 재시도 없이 모니터 로그에 남깁니다.
+- **AI 진단**: AI Diagnostics 화면에서 수동 실행하거나 `autoDiagnose`로 실패 시 자동 실행. 프로바이더 연결 테스트와 모델 목록 조회를 지원하고, 진단 결과는 Overview의 실패 run 카드에도 표시됩니다.
 - **테마**: 사이드바 하단·상단의 라이트/다크 토글. `localStorage`에 저장.
 
 ## 트러블슈팅

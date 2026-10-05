@@ -55,7 +55,7 @@ export function createProvider(config) {
           { role: "system", content: "You are an expert Unreal Engine build automation engineer." },
           { role: "user", content: prompt }
         ]
-        // No temperature: some endpoints (e.g. Kimi) reject any value but their own default.
+        // No temperature: some endpoints reject any value but their own default.
       };
       const result = await requestJsonWithRetry(baseUrl, {
         method: "POST",

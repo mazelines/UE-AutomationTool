@@ -14,42 +14,46 @@ export const DEFAULT_RUN_OPTIONS = {
   // Skip the upstream fetch/merge entirely and build the fork branch as-is.
   skipUpstreamSync: false,
   skipPushOrigin: false,
-  // noDdc defaults to true while the upstream FAmbientCubemapCompositePS/InstancedView
-  // regression keeps the DDC fill step failing on the VR template (2026-07-13).
-  noDdc: true,
+  // DDC generation stays on by default — a typical installed build ships a compiled DDC
+  // for engine content/templates (InstalledEngineBuild.xml WithDDC default). If an
+  // upstream shader regression breaks the DDC fill step again (last seen 2026-07-13,
+  // AmbientCubemapComposite/InstancedView on the VR template), use the Run Options
+  // "No DDC" toggle for that run instead of silently building without one.
+  noDdc: false,
   allowMergeCommit: true
 };
 
 export const DEFAULT_THRESHOLDS = { diskFreePct: 15, upstreamCommits: 50, buildHours: 6 };
 
-// AI provider configuration defaults. Claude Code uses the locally installed `claude` CLI
-// and reuses its existing OAuth session (no API key required). Other providers are OpenAI-
-// compatible and require an API key and base URL.
+// AI provider configuration defaults. Codex CLI uses the locally installed `codex` CLI
+// and reuses its existing ChatGPT OAuth session (no API key required). Other providers
+// are OpenAI-compatible and require an API key and base URL.
 export const DEFAULT_AI_PROVIDERS = {
-  claude: {
-    id: "claude",
-    name: "Claude Code",
-    kind: "claude-cli",
+  codex: {
+    id: "codex",
+    name: "Codex CLI",
+    kind: "codex-cli",
     enabled: true,
-    // Path to the claude executable. Empty means auto-detect from PATH.
+    // Path to the codex executable. Empty means auto-detect from PATH.
     cliPath: "",
-    // Model passed as `--model <id>` (alias like "sonnet"/"opus"/"haiku" or a full model ID).
-    // Empty means the CLI's own default.
+    // Model passed as `--model <id>`. Empty means the CLI's own default
+    // (the `model` key in ~/.codex/config.toml).
     model: "",
-    // Non-interactive CLI flags used when invoking Claude for diagnosis. "plan" keeps the
-    // session read-only (log analysis needs no tools) and, unlike bypassPermissions, is not
-    // blocked by managed policy. The prompt itself is delivered via stdin (see ai/claude.js).
-    flags: ["--permission-mode", "plan", "--no-session-persistence", "--output-format", "json"]
+    modelHint: "gpt-6-astra",
+    // Non-interactive flags used when invoking Codex CLI for diagnosis. The read-only
+    // sandbox keeps log analysis side-effect free; --ephemeral avoids persisting a
+    // session file for every monitor diagnosis.
+    flags: ["--skip-git-repo-check", "--ephemeral", "--color", "never", "--sandbox", "read-only"]
   },
-  kimi: {
-    id: "kimi",
-    name: "Kimi Code",
+  zai: {
+    id: "zai",
+    name: "Z.AI International",
     kind: "openai-compatible",
     enabled: false,
     apiKey: "",
-    baseUrl: "https://api.kimi.com/coding/v1",
+    baseUrl: "https://api.z.ai/api/coding/paas/v4",
     model: "",
-    modelHint: "kimi-k2-0711"
+    modelHint: "glm-4.7"
   }
 };
 
@@ -60,7 +64,7 @@ export const DEFAULT_AI_CONFIG = {
   // Max tokens per provider call (approx budget cap). Long logs are truncated to fit.
   maxTokens: 120000,
   // Primary and secondary provider IDs. Secondary is used when primary fails.
-  primaryProviderId: "claude",
+  primaryProviderId: "codex",
   secondaryProviderId: "",
   // Stored AI diagnoses keyed by run log name.
   diagnostics: {}
@@ -110,8 +114,8 @@ function applyAiDefaults(ws) {
       if (ws.ai.providers[id][key] === undefined) ws.ai.providers[id][key] = defaults[key];
     }
   }
-  // Drop providers removed from the registry (e.g. modelark, zai) out of saved workspaces
-  // so they never enter the diagnosis order, and reset dangling primary/secondary picks.
+  // Drop providers removed from the registry (e.g. modelark, kimi, claude) out of saved
+  // workspaces so they never enter the diagnosis order, and reset dangling primary/secondary picks.
   for (const id of Object.keys(ws.ai.providers)) {
     if (!DEFAULT_AI_PROVIDERS[id]) delete ws.ai.providers[id];
   }
@@ -120,13 +124,6 @@ function applyAiDefaults(ws) {
   }
   if (ws.ai.secondaryProviderId && !ws.ai.providers[ws.ai.secondaryProviderId]) {
     ws.ai.secondaryProviderId = "";
-  }
-  // Migrate workspaces saved with the original bypassPermissions flags to the current
-  // plan-mode defaults (the old default array is never a deliberate user choice).
-  const oldDefaultFlags = ["--permission-mode", "bypassPermissions", "--no-session-persistence", "--output-format", "json"];
-  const claude = ws.ai.providers.claude;
-  if (claude && JSON.stringify(claude.flags) === JSON.stringify(oldDefaultFlags)) {
-    claude.flags = [...DEFAULT_AI_PROVIDERS.claude.flags];
   }
   return ws;
 }

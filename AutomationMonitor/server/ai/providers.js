@@ -1,22 +1,22 @@
 import { createProvider as createOpenAiProvider } from "./openai-compatible.js";
-import { createProvider as createClaudeProvider } from "./claude.js";
+import { createProvider as createCodexProvider } from "./codex.js";
 
 export const PROVIDER_META = {
-  claude: {
-    id: "claude",
-    name: "Claude Code",
-    description: "Reuses the locally installed Claude Code CLI OAuth session."
+  codex: {
+    id: "codex",
+    name: "Codex CLI",
+    description: "Reuses the locally installed Codex CLI's ChatGPT OAuth session."
   },
-  kimi: {
-    id: "kimi",
-    name: "Kimi Code",
-    description: "OpenAI-compatible Kimi endpoint (configure base URL and model)."
+  zai: {
+    id: "zai",
+    name: "Z.AI International",
+    description: "OpenAI-compatible Z.AI international endpoint (configure base URL and model)."
   }
 };
 
 export function createProvider(config) {
   if (!config) return null;
-  if (config.kind === "claude-cli") return createClaudeProvider(config);
+  if (config.kind === "codex-cli") return createCodexProvider(config);
   if (config.kind === "openai-compatible" && config.enabled) return createOpenAiProvider(config);
   return null;
 }

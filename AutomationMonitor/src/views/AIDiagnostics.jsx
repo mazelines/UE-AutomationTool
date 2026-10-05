@@ -5,13 +5,13 @@ import { IconSpark, IconCheck } from "../icons.jsx";
 const DEFAULT_AI_CONFIG = {
   autoDiagnose: false,
   maxTokens: 120000,
-  primaryProviderId: "claude",
+  primaryProviderId: "codex",
   secondaryProviderId: ""
 };
 
 const AI_PROVIDERS = [
-  { id: "claude", name: "Claude Code", kind: "claude-cli", desc: "로컬 claude CLI 재사용 (OAuth 세션)" },
-  { id: "kimi", name: "Kimi Code", kind: "openai-compatible", desc: "OpenAI 호환 API" }
+  { id: "codex", name: "Codex CLI", kind: "codex-cli", desc: "로컬 codex CLI 재사용 (ChatGPT OAuth 세션)" },
+  { id: "zai", name: "Z.AI International", kind: "openai-compatible", desc: "OpenAI 호환 API" }
 ];
 
 const INPUT_STYLE = {
@@ -95,7 +95,7 @@ export default function AIDiagnosticsView({ flash }) {
   useEffect(() => { load(); }, []);
 
   const enabledProviderIds = useMemo(() => Object.entries(providers)
-    .filter(([id, p]) => id === "claude" ? true : p?.enabled)
+    .filter(([id, p]) => id === "codex" ? true : p?.enabled)
     .map(([id]) => id), [providers]);
 
   const updateProvider = (id, patch) => {
@@ -208,12 +208,12 @@ export default function AIDiagnosticsView({ flash }) {
 
       {AI_PROVIDERS.map((p) => {
         const provider = providers[p.id] || {};
-        const isEnabled = p.id === "claude" ? true : provider.enabled;
+        const isEnabled = p.id === "codex" ? true : provider.enabled;
         return (
           <Section key={p.id} title={p.name}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
               <div style={{ fontSize: 11, color: "var(--text-mute)" }}>{p.desc}</div>
-              {p.id !== "claude" && (
+              {p.id !== "codex" && (
                 <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 12 }}>
                   <input
                     type="checkbox"
@@ -224,32 +224,25 @@ export default function AIDiagnosticsView({ flash }) {
                 </label>
               )}
             </div>
-            {p.kind === "claude-cli" && (
+            {p.kind === "codex-cli" && (
               <>
                 <Row label="CLI 경로" help="비워두면 PATH에서 자동 검색">
                   <input
                     value={provider.cliPath || ""}
                     onChange={(event) => updateProvider(p.id, { cliPath: event.target.value })}
-                    placeholder="claude"
+                    placeholder="codex"
                     style={{ ...INPUT_STYLE, fontFamily: "var(--font-mono)" }}
                   />
                 </Row>
-                {/* Model selection unlocks once the CLI connection is proven (or a model was saved before). */}
-                {((testResult?.id === p.id && testResult.ok) || provider.model) && (
-                  <Row label="모델" help="비워두면 CLI 기본 모델 사용">
-                    <select
-                      value={provider.model || ""}
-                      onChange={(event) => updateProvider(p.id, { model: event.target.value })}
-                      style={SELECT_STYLE}
-                    >
-                      <option value="">기본값 (CLI 설정 따름)</option>
-                      <option value="fable">Fable</option>
-                      <option value="opus">Opus</option>
-                      <option value="sonnet">Sonnet</option>
-                      <option value="haiku">Haiku</option>
-                    </select>
-                  </Row>
-                )}
+                {/* Free text: codex model IDs change per CLI release, so no fixed dropdown. */}
+                <Row label="모델" help="비워두면 CLI 기본 모델 사용">
+                  <input
+                    value={provider.model || ""}
+                    onChange={(event) => updateProvider(p.id, { model: event.target.value })}
+                    placeholder={provider.modelHint || "gpt-6-astra"}
+                    style={{ ...INPUT_STYLE, fontFamily: "var(--font-mono)" }}
+                  />
+                </Row>
               </>
             )}
             {p.kind === "openai-compatible" && (
