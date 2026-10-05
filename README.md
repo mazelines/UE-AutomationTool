@@ -1,17 +1,7 @@
 # AutomationMonitor
 
-## Google Drive 자동 업로드 및 릴리스 노트
-
-1. Google Drive 데스크톱 앱을 설치하고 로그인합니다. 모니터 서버를 실행하는 계정에서 동기화 폴더에 접근할 수 있어야 합니다.
-2. Deploy → Google Drive → 경로 지정에 `G:\내 드라이브\PublicShare\UnrealEngine6`처럼 실제 동기화 폴더의 절대 경로를 저장합니다. 폴더가 존재해야 하며 찾아보기로 선택할 수도 있습니다.
-3. 자동 배포 타깃에서 Google Drive를 선택하고 **빌드 성공 시 자동 배포**를 켭니다. 이미 완료된 빌드는 Deploy 버튼으로 수동 업로드할 수 있습니다.
-
-성공한 빌드마다 업스트림 머지 직전 HEAD와 빌드 HEAD 사이의 커밋 메시지(본문 포함), 작성자, 날짜, 변경 파일 목록을 `releasseNote_yyyyMMdd-HHmmss.txt`로 빌드 로그 폴더에 UTF-8로 저장합니다. 머지를 건너뛰거나 새 커밋이 없으면 그 사실을 기록합니다. 이름의 `releasseNote` 철자는 의도한 형식입니다.
-
-동기화 폴더에 `Engine-yyyyMMdd-HHmmss.7z`(또는 `.zip`)와 해당 릴리스 노트를 저장하면 Google Drive 데스크톱 앱이 업로드합니다. 모니터 서버가 실행 중일 때 1분 간격으로 새 성공 빌드를 확인합니다. 배포 완료/Saved는 폴더 저장 완료를 뜻하며, 실제 클라우드 업로드 완료는 Drive 앱에서 확인해야 합니다. 실패는 배포 이력에 기록되며 수동 재배포가 가능합니다. 두 파일 중 하나라도 저장에 실패하면 먼저 저장된 파일은 남을 수 있습니다. 서버의 `LocalBuilds/AutomationMonitor`에서 압축 후 동기화 폴더에 복사하므로 두 위치에 압축 파일 크기만큼 여유 공간이 필요합니다. 예전 빌드는 릴리스 노트가 없으면 Google Drive 배포를 거부합니다.
-
 Unreal Engine 소스 저장소의 **nightly upstream sync**와 **installed-engine build**를 모니터링·실행·배포하는 웹 대시보드입니다.  
-`Automation/SyncAndBuildInstalled.ps1` 파이프라인을 감시하고, Windows 작업 스케줄러 등록, 로그 열람, 디스크·upstream 상태 알림, SMB 배포까지 한 화면에서 처리합니다.
+`Automation/SyncAndBuildInstalled.ps1` 파이프라인을 감시하고, Windows 작업 스케줄러 등록, 로그 열람, 디스크·upstream 상태 알림, SMB·Google Drive 배포, 릴리스 노트 생성, AI 진단과 직접 해결을 한 화면에서 처리합니다.
 
 이 도구는 자신만의 디렉터리에서 독립적으로 실행되며, 빌드·배포 대상이 되는 언리얼 엔진 클론과는 별도로 존재합니다. 대시보드 상단의 저장소 선택기에서 로컬에 클론된 UE 저장소를 등록·전환하며, 각 저장소는 자신만의 빌드 설정·배포 타깃·알림 설정을 독립적으로 가집니다. 자세한 내용은 [저장소 선택](#저장소-선택)을 참고하세요.
 
@@ -20,10 +10,10 @@ Unreal Engine 소스 저장소의 **nightly upstream sync**와 **installed-engin
 | 화면 | 설명 |
 |------|------|
 | Overview | 파이프라인 상태, 7일 성공률, 디스크·출력 용량, 스케줄 작업, Git/upstream 요약 |
-| Run & Pipeline | Run 옵션, `install_build_config.ini` 편집, 즉시 실행·스케줄 등록 |
-| Deploy | installed-engine 아티팩트 목록, SMB 타깃 압축 배포, 자동 배포, 배포 이력 |
+| Run & Pipeline | Run 옵션, 설치 빌드 설정 편집, 즉시 실행·스케줄 등록 |
+| Deploy | installed-engine 아티팩트 목록, SMB·Google Drive 동기화 폴더 배포, 자동 배포, 릴리스 노트, 배포 이력 |
 | Logs | 빌드·모니터 로그 tail, 필터, 다운로드 |
-| AI Diagnostics | 빌드 실패 AI 진단 (Codex CLI·OpenAI 호환 API), 자동/수동 실행, 결과 열람 |
+| AI Diagnostics | 파이프라인 실패 AI 진단 (Codex CLI·OpenAI 호환 API), 자동/수동 실행, 진행 상태·결과, 직접 해결·실행 로그 |
 | Alerts | 인시던트 피드, 알림 채널 설정, 트리거 규칙 |
 
 ## 스크린샷
@@ -44,11 +34,11 @@ Clean/NoClean 실행, 일일 스케줄 시각, upstream/deps/project files/DDC �
 
 브랜치·버전·타깃 플랫폼, upstream remote, 빌드 타깃(Editor/DDC/Client/Server), 출력·로그 경로를 UI에서 편집하고 선택한 저장소의 `LocalBuilds/AutomationMonitor/workspace.json`(`build` 섹션)에 반영합니다. **Verbose Log** 토글(`Logging.Verbose`, 기본 on)은 RunUAT/BuildGraph에 `-Verbose`를 전달하고 BuildGraph 인자를 콘솔에 출력해 디버깅을 돕습니다.
 
-![Install Build Config](images/3.png)
-
 ### Deploy
 
-`build_summary_*.txt` 기준 최신 성공 빌드를 CURRENT 아티팩트로 표시하고, SMB 공유 등 배포 타깃에 `Engine.7z`(또는 `Engine.zip`)로 압축 배포합니다. **빌드 성공 시 자동 배포**를 켜면 새 CURRENT 아티팩트가 생길 때마다 한 번씩 자동으로 배포합니다 (모니터에서 실행한 빌드와 스케줄 작업 빌드 모두 해당).
+최신 `build_summary_*.txt`가 성공이고 출력 폴더가 존재하면 CURRENT 아티팩트로 표시합니다. SMB에는 `Engine.7z`(또는 `Engine.zip`), Google Drive 동기화 폴더에는 날짜·시간이 붙은 압축 파일과 릴리스 노트를 저장합니다. **빌드 성공 시 자동 배포**를 켜면 선택한 타깃에 새 빌드를 한 번씩 배포합니다. 모니터에서 실행한 빌드와 스케줄 작업 빌드 모두 해당하며 모니터 서버가 실행 중이어야 합니다.
+
+![Installed-Engine Artifacts](images/3.png)
 
 ![Deploy](images/4.png)
 
@@ -58,13 +48,33 @@ Clean/NoClean 실행, 일일 스케줄 시각, upstream/deps/project files/DDC �
 
 ![Alerts](images/5.png)
 
+## Google Drive 배포 및 릴리스 노트
+
+### 동기화 폴더 설정
+
+1. 모니터 서버를 실행하는 Windows 계정에서 Google Drive 데스크톱 앱을 실행하고 로그인합니다.
+2. 배포할 동기화 폴더를 만듭니다. 예: `G:\내 드라이브\PublicShare\UnrealEngine6`.
+3. **Deploy → Distribution Targets → Google Drive → 경로 지정**에서 폴더의 절대 경로를 입력하거나 찾아보기로 선택합니다.
+4. 자동 배포 타깃을 **Google Drive**로 선택하고 **빌드 성공 시 자동 배포**를 켭니다. 압축 형식은 `7z` 또는 `zip`을 선택할 수 있습니다.
+
+자동 배포는 1분 간격으로 확인하며, 켠 시점에 이미 존재하는 빌드는 다시 배포하지 않습니다. 기존 빌드는 Deploy 버튼으로 수동 배포할 수 있습니다. Google Drive 타깃은 해당 빌드의 릴리스 노트가 생성되어 있어야 배포할 수 있습니다.
+
+### 생성 파일
+
+| 파일 | 내용 |
+|------|------|
+| `Engine-yyyyMMdd-HHmmss.7z` 또는 `.zip` | 설치 빌드 압축 파일 |
+| `releasseNote_yyyyMMdd-HHmmss.txt` | 머지로 반영된 커밋 메시지·작성자·날짜와 변경 파일 목록 |
+
+릴리스 노트는 업스트림 머지 직전 HEAD와 빌드 HEAD를 비교하여 성공한 빌드의 로그 폴더(`Paths.LogDirectory`, 기본 `LocalBuilds/Logs`)에 UTF-8로 저장합니다. 머지를 건너뛰거나 새 커밋이 없으면 그 사실을 기록합니다. `releasseNote` 철자는 요청한 파일명 형식입니다.
+
+압축은 대상 UE 저장소의 `LocalBuilds/AutomationMonitor` 임시 폴더에서 수행한 후 동기화 폴더에 복사합니다. 두 위치에 압축 파일 크기만큼 여유 공간이 필요합니다. 완료된 파일을 동기화하는 실제 업로드는 Google Drive 데스크톱 앱이 담당하며, 화면의 **Saved**는 폴더 저장 완료를 뜻합니다. 클라우드 업로드 완료는 Drive 앱에서 확인하세요.
+
+압축·복사 실패는 배포 이력에 기록되고 수동 재배포할 수 있습니다. 압축 파일과 노트 중 하나만 저장된 뒤 실패하면 먼저 저장된 파일은 남을 수 있습니다. 성공 여부와 자세한 오류는 Deploy History 및 `deploy-*.log`에서 확인합니다.
+
 ## AI 진단
 
-AI Diagnostics의 최근 진단 결과와 Overview 진단 카드에서 **직접 해결**을 누르면 로컬 Codex CLI가 해당 UE 저장소 및 자동화 도구의 파일·설정을 수정하고 원래 실패 원인을 검증합니다. 진단이 성공한 실패 실행만 선택할 수 있습니다. 결과에는 해결 완료/사용자 조치 필요/실패 상태, 수정 파일, 검증, 다음 조치와 실행 로그가 표시됩니다. 진단용 프로바이더가 API여도 실제 수정 실행은 Codex CLI가 담당합니다.
-
-직접 해결은 서버 PC의 로컬 모니터에서 실행하며 Codex 로그인과 Windows에서는 `codex.exe`가 필요합니다. `workspace-write` 및 대상 UE 저장소/자동화 도구 경로를 사용하고 Fetch 검증을 위한 네트워크 접근을 허용합니다. 인증이나 접근 권한을 자동으로 고칠 수 없으면 필요한 사용자 조치를 보고합니다. 빌드·배포 중에는 시작할 수 없고 수정 작업 중에는 모니터의 빌드 실행·저장소 전환·배포가 차단됩니다. 예약 작업 스케줄러가 외부에서 시작하는 빌드와 겹치지 않도록 운영해야 합니다. 작업은 최대 20분이며, 전체 엔진 재빌드·커밋·푸시·배포는 수행하지 않도록 지시합니다. 전체 빌드 성공 여부는 다음 빌드에서 확인하세요. 서버를 재시작하면 기존 해결 작업은 자동 재개하지 않으며 로그와 변경 파일을 확인해야 합니다.
-
-빌드가 실패하면 파이프라인 래퍼 로그와 UBT 빌드 출력 로그 tail을 AI 프로바이더에 보내 **요약·근본 원인·영향 파일·권장 해결책·신뢰도**를 JSON으로 받아 보여줍니다. AI Diagnostics 화면에서 설정하고, Overview에서 결과를 확인합니다.
+파이프라인이 실패하면 래퍼 로그와 UBT 빌드 출력 로그 tail을 AI 프로바이더에 보내 **요약·근본 원인·영향 파일·권장 해결책·신뢰도**를 JSON으로 받아 보여줍니다. Fetch처럼 엔진 빌드 전 단계에서 실패한 경우에는 래퍼 로그로 진단합니다. AI Diagnostics와 Overview에서 진행 상태와 저장된 진단 결과를 확인할 수 있습니다.
 
 - **프로바이더**
   - **Codex CLI** (기본): 로컬에 설치된 `codex` CLI의 ChatGPT OAuth 세션(`codex login`)을 재사용하므로 API 키가 필요 없습니다. `--sandbox read-only`로 비대화형 실행하며, CLI 경로와 모델을 지정할 수 있습니다.
@@ -74,14 +84,37 @@ AI Diagnostics의 최근 진단 결과와 Overview 진단 카드에서 **직접 
 - **토큰 예산**: `maxTokens`(기본 120,000)에 맞춰 긴 로그는 앞부분(맥락)과 뒷부분(에러)을 남기고 중간을 잘라 보냅니다.
 - **API 키 보호**: 저장된 키는 조회 시 `[REDACTED]`로 마스킹되며, 재저장해도 기존 키가 유지됩니다. 진단 결과는 `workspace.json`의 `ai.diagnostics`에 run 로그 이름별로 저장됩니다.
 
+### 직접 해결
+
+1. **AI Diagnostics → 최근 실패 실행 · AI 진단 결과**에서 진단 완료를 확인합니다. 자동 진단을 사용하지 않으면 **최근 실패 로그 수동 진단**을 먼저 실행합니다.
+2. 해당 결과의 **직접 해결**을 누릅니다. Overview의 AI 진단 카드에서도 같은 버튼을 사용할 수 있습니다.
+3. **실행 로그**에서 진행 상황을 확인하고, 완료 후 수정 파일·검증 결과·다음 조치를 검토합니다.
+4. 해결 완료 후 빌드를 다시 실행하여 전체 파이프라인 성공 여부를 확인합니다.
+
+진단이 성공한 실패 실행에만 직접 해결 버튼을 제공합니다. 진단 프로바이더가 Z.AI여도 실제 수정은 로컬 Codex CLI가 수행하므로 Codex 로그인과 `codex.exe`가 필요합니다. 실행 파일을 자동으로 찾지 못하면 AI 설정의 CLI 경로에 지정하세요. 서버 PC에서 `http://127.0.0.1:4174` 또는 개발 UI `http://127.0.0.1:5173`로 접속해야 실행할 수 있습니다.
+
+| 상태 | 의미 |
+|------|------|
+| AI가 직접 해결 중 | 진단·로그를 확인하고 로컬 파일·설정 수정 및 검증을 수행 중 |
+| 해결 완료 | AI가 수정 내용과 원래 실패 원인에 대한 검증 결과를 보고함 |
+| 사용자 조치 필요 | 인증·접근 권한 등 직접 처리해야 할 조치가 남음 |
+| 해결 실패 | 실행 오류 또는 해결·검증 실패. 실행 로그 확인 필요 |
+| 작업 추적 중단 | 서버 재시작으로 추적이 중단됨. 로그와 변경 파일 확인 필요 |
+
+수정 실행은 `workspace-write`로 대상 UE 저장소와 자동화 도구 경로에 쓰기 권한을 부여하고 Fetch 검증 등을 위한 네트워크 접근을 허용합니다. 기존 변경을 보존하며 전체 엔진 재빌드·커밋·푸시·배포는 수행하지 않도록 지시합니다. 작업 제한은 20분입니다. 빌드·배포 중에는 시작할 수 없고, 해결 작업 중에는 모니터의 빌드 실행·저장소 전환·배포가 차단됩니다. Windows 작업 스케줄러가 외부에서 시작하는 빌드와 겹치지 않도록 운영해야 합니다.
+
+작업 이력은 `monitor-state.json`의 `aiFixHistory`, 실행 로그는 `LocalBuilds/AutomationMonitor/ai-fix-<작업 ID>.log`에 저장됩니다. 서버 재시작 후 자동 재개하지 않으며 이전 프로세스가 살아 있으면 새 해결 작업을 시작하지 않습니다.
+
 ## 요구 사항
 
 - Windows 10/11
-- [Node.js](https://nodejs.org/) 18 이상 (LTS 권장)
+- [Node.js](https://nodejs.org/) — 설치된 Vite 버전의 요구 사항 충족 필요 (현재 Vite 8: 20.19+ 또는 22.12+)
 - Git, PowerShell 5.1+
 - [7-Zip](https://www.7-zip.org/) — 배포 압축용. `C:\Program Files\7-Zip\7z.exe`를 먼저 찾고, 없으면 `PATH`의 `7z`를 사용합니다.
 - 모니터링 대상: 로컬에 클론된 Unreal Engine 저장소 (`.git` 포함) — 저장소 선택기에서 등록
 - (선택) AI 진단 프로바이더: 로컬 Codex CLI 로그인 세션(`codex login`), 또는 OpenAI 호환 API 키 — 없으면 AI 진단만 비활성
+- (선택) Google Drive 배포: 로그인한 Google Drive 데스크톱 앱과 접근 가능한 동기화 폴더
+- (선택) AI 직접 해결: 로컬 Codex CLI의 `codex.exe`와 로그인 세션
 - 빌드 로그: `<선택한 저장소>/LocalBuilds/AutomationLogs/`
 - 모니터 로그·상태·설정: `<선택한 저장소>/LocalBuilds/AutomationMonitor/`
 
@@ -153,11 +186,11 @@ AutomationMonitor/
 - **프론트엔드**: React + Vite. 5초마다 `/api/status` 폴링.
 - **백엔드**: 순수 Node `http` 서버. PowerShell·`git`·`7z` 호출은 현재 활성 저장소를 대상으로 실행. 자동 배포 워처는 1분마다 새 CURRENT 아티팩트를 확인.
 - **파이프라인 파싱**: `SyncAndBuildInstalled.ps1` 래퍼 로그의 `START`/`DONE` 단계와 UBT 빌드 로그를 합쳐 진행률 계산.
-- **설정**: UI 편집 값은 활성 저장소의 `LocalBuilds/AutomationMonitor/workspace.json`과 저장소 루트의 `install_build_config.ini`에 저장. ACK·배포 이력은 같은 폴더의 `monitor-state.json`.
+- **설정**: UI 편집 값은 활성 저장소의 `LocalBuilds/AutomationMonitor/workspace.json`에 저장합니다. `install_build_config.ini`는 초기 설정 이관 및 이전 스크립트 호환용입니다. ACK·배포·AI 해결 이력은 같은 폴더의 `monitor-state.json`에 저장합니다.
 
 ### 파이프라인 단계
 
-`SyncAndBuildInstalled.ps1`의 `Invoke-LoggedStep` 이름과 1:1 대응합니다.
+다음 12단계는 대시보드 진행률에 표시되는 단계입니다. 성공 후 스크립트에서 `Write release notes`를 추가 실행하며, 이 단계는 현재 진행률 목록에는 별도로 표시하지 않습니다.
 
 1. Validate repository state (sync 전 `Templates/`의 tracked 변경은 자동 discard — 빌드/에디터가 다시 쓰는 `DefaultEngine.ini`가 매번 sync를 막던 문제 해결)  
 2. Configure upstream remote  
@@ -180,14 +213,20 @@ AutomationMonitor/
 
 | 섹션 | 용도 |
 |------|------|
-| `build` | `install_build_config.ini`와 동기화되는 빌드 설정 |
+| `build` | 설치 빌드 설정. 초기 생성 시 `install_build_config.ini`에서 이관 |
 | `runOptions` | Run 탭 플래그·스케줄 시각·출력 디렉터리 |
-| `deploy.targets` | SMB/P4 등 배포 타깃 (SMB만 실배포) |
+| `deploy.targets` | SMB(`smb`)·Google Drive 동기화 폴더(`gdrive`) 배포 타깃. P4는 스텁 |
 | `deploy.auto` | 빌드 성공 시 자동 배포 on/off와 대상 타깃 (`{ enabled, targetId }`) |
 | `deploy.format` | 배포 압축 형식 — `7z`(기본) 또는 `zip` |
 | `alerts.channels` | Slack, Email, Windows Toast on/off |
 | `alerts.thresholds` | 디스크 %, upstream 커밋 수, 빌드 시간(h) |
 | `ai` | AI 진단 — 프로바이더 설정(Codex CLI·OpenAI 호환), primary/secondary, `autoDiagnose`, `maxTokens`, run별 진단 결과(`diagnostics`) |
+
+### 로컬 설정과 인증정보
+
+실제 API 키는 대상 UE 저장소의 `LocalBuilds/AutomationMonitor/workspace.json`에 로컬로 저장됩니다. 브라우저 조회 시 마스킹되지만 파일 자체는 암호화되지 않으므로 접근 권한을 관리해야 합니다. Codex·Google Drive 로그인 정보는 각 앱이 관리하며 저장소에 복사할 필요가 없습니다.
+
+이 도구 저장소는 `.env`, 인증 파일(`.pem`·`.p12`·`.pfx`, `credentials.json`, `client_secret*.json`, `service-account*.json`), `rclone.conf`, `LocalBuilds/`, `repos.json`, 실행 로그 등을 Git에서 제외합니다. 대상 UE 저장소에도 `LocalBuilds/` 제외 규칙이 적용되는지 확인하세요. 이 도구의 `.gitignore`는 별도 UE 저장소까지 적용되지 않습니다.
 
 ### 환경 변수
 
@@ -205,15 +244,19 @@ AutomationMonitor/
 | POST | `/api/stop` | 실행 중인 빌드 종료 (모니터 실행·스케줄 작업 실행 모두) |
 | POST | `/api/register-task` | 야간 스케줄 작업 등록 |
 | POST | `/api/start-task` | 등록된 스케줄 작업 즉시 시작 |
-| GET/POST | `/api/install-config` | 빌드 INI 읽기/쓰기 |
+| GET/POST | `/api/install-config` | `workspace.json`의 설치 빌드 설정 읽기/쓰기 |
 | POST | `/api/upstream/register` | upstream remote 추가 및 fetch |
 | GET | `/api/logs/:name` | 로그 tail |
 | GET/POST | `/api/ai/config` | AI 프로바이더·자동 진단 설정 (조회 시 API 키는 `[REDACTED]` 마스킹) |
 | POST | `/api/ai/test` | 프로바이더 연결 테스트 (`{ providerId, config? }`) |
 | POST | `/api/ai/models` | 프로바이더 모델 목록 조회 (`{ providerId, config? }`) |
 | POST | `/api/ai/diagnose` | 빌드 진단 실행 (`{ logName }`, 생략 시 최근 실패 run) |
+| GET | `/api/ai/fix` | 직접 해결 작업 상태·이력 조회 (서버 PC의 로컬 요청만 허용) |
+| POST | `/api/ai/fix` | 직접 해결 시작 (`{ logName }`, 완료된 진단 필요) |
+| GET | `/api/ai/fix/log?id=<작업 ID>` | 직접 해결 실행 로그 조회 |
 | GET | `/api/deploy` | 아티팩트·타깃·자동 배포 설정·압축 형식·이력 |
-| POST | `/api/deploy/start` | SMB 압축 배포 시작 |
+| POST | `/api/deploy/start` | SMB 또는 Google Drive 동기화 폴더 배포 시작 (`{ targetId }`) |
+| POST | `/api/deploy/targets` | 타깃 이름·경로 저장 (타깃 객체 배열) |
 | POST | `/api/deploy/format` | 압축 형식 저장 (`{ format: "7z" \| "zip" }`) |
 | POST | `/api/deploy/auto` | 자동 배포 on/off (`{ enabled, targetId }`) |
 | GET | `/api/repos` | 등록된 저장소 목록·활성 선택 |
@@ -227,12 +270,25 @@ AutomationMonitor/
 - **Run (NoClean)**: 증분 빌드용 `-NoClean` 전달.
 - **Stop**: 모니터가 시작한 실행은 `taskkill /PID <pid> /T /F`로 PowerShell 하위 UAT·UBT까지 트리 종료하고, 스케줄 작업이 시작한 실행은 `Stop-ScheduledTask` 후 CIM으로 해당 PowerShell 트리를 찾아 종료합니다. Stop 시점 이전에 시작된 run은 즉시 "Cancelled by user (Stop Run)"로 표시됩니다.
 - **Add & Fetch Upstream**: Epic 원격 등록 후 지정 브랜치만 fetch (HTTP/1.1 강제).
-- **Deploy**: `Engine.<format>.partial`로 먼저 압축한 뒤 성공했을 때만 `Engine.<format>`으로 교체하므로, 실패한 배포가 기존 아카이브를 덮어쓰지 않습니다.
+- **Deploy**: SMB는 `.partial` 파일 압축 완료 후 `Engine.<format>`으로 교체합니다. Google Drive는 로컬 압축 후 동기화 폴더에 날짜·시간별 압축 파일과 릴리스 노트를 복사하고, 앱이 클라우드 동기화를 수행합니다.
 - **자동 배포**: 켠 시점의 CURRENT 아티팩트를 기준선으로 잡아 과거 빌드를 다시 배포하지 않습니다. 빌드당 한 번만 시도하며, 실패하면 재시도 없이 모니터 로그에 남깁니다.
-- **AI 진단**: AI Diagnostics 화면에서 수동 실행하거나 `autoDiagnose`로 실패 시 자동 실행. 프로바이더 연결 테스트와 모델 목록 조회를 지원하고, 진단 결과는 Overview의 실패 run 카드에도 표시됩니다.
+- **AI 진단**: 자동·수동 진단 결과와 진행 상태는 AI Diagnostics 및 Overview에 표시합니다. 모니터에서 실행한 파이프라인은 프로세스 종료 직후 진단 확인을 시작합니다.
+- **직접 해결**: 완료된 진단의 버튼으로 수정 작업을 시작합니다. 작업 결과와 실행 로그를 확인한 뒤 빌드를 다시 실행합니다.
 - **테마**: 사이드바 하단·상단의 라이트/다크 토글. `localStorage`에 저장.
 
 ## 트러블슈팅
+
+### Fetch에서 실패했는데 AI 진단 결과가 보이지 않을 때
+
+AI Diagnostics에서 **빌드 실패 시 자동으로 AI 진단 실행**을 켜고 **설정 저장**을 누르세요. **최근 실패 실행 · AI 진단 결과**에서 진단 중·완료·실패 상태를 확인합니다. Fetch는 빌드 출력 로그가 없어도 래퍼 로그로 진단할 수 있으며 Git 원문 오류가 래퍼 로그에 기록됩니다. 진단 실패 시 프로바이더 연결 테스트 또는 수동 진단을 사용하세요.
+
+### Google Drive 배포가 실패하거나 업로드되지 않을 때
+
+Drive 앱의 로그인·실행 상태, 지정 폴더 존재 여부, 서버 계정에서의 경로 접근 및 디스크 여유 공간을 확인하세요. 릴리스 노트가 없다는 오류라면 해당 빌드의 `releasseNote_*.txt`가 생성됐는지 확인합니다. Saved인데 웹 Drive에 파일이 보이지 않으면 앱의 동기화 대기·오류 상태를 확인해야 합니다.
+
+### 직접 해결 버튼이 동작하지 않을 때
+
+서버 PC에서 로컬 URL로 접속하고, Codex 로그인과 `codex.exe` 경로를 확인하세요. 빌드·배포 또는 다른 해결 작업이 실행 중이면 끝난 뒤 다시 시도합니다. **사용자 조치 필요**이면 결과의 다음 조치를 수행하세요. 해결 완료는 해당 실패 원인의 검증 결과이므로 전체 엔진 빌드 성공은 재실행으로 확인해야 합니다.
 
 ### 빌드는 SUCCESS인데 출력물이 비정상적으로 작을 때 (Templates/FeaturePacks 누락)
 
@@ -255,6 +311,17 @@ Error while trying to create file pattern match for '...': Source file '...' doe
 - `SyncAndBuildInstalled.ps1` — 실제 sync·build 파이프라인. `-RepoRoot`(대상 UE 클론 경로) 필수 — AutomationMonitor가 활성 저장소를 자동으로 전달합니다.
 - `Register-NightlyInstalledBuildTask.ps1` — 야간 빌드 작업 스케줄러 등록. 마찬가지로 `-RepoRoot` 필수.
 - `Register-MonitorServerTask.ps1` — 모니터 서버(이 도구 자체) 상시 구동 등록
+
+## 개발 검증
+
+`AutomationMonitor` 디렉터리에서 실행합니다.
+
+```powershell
+node --test server/ai/fix.test.js server/deploy.test.js
+npm.cmd run build
+```
+
+테스트는 실제 Google Drive 업로드나 AI 수정을 실행하지 않고 작업 흐름·실패 처리·중복 실행 방지 등을 검증합니다.
 
 ## 라이선스
 
