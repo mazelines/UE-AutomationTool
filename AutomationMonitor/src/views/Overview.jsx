@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { formatClock, formatDate, parseDate, timeAgo } from "../api.js";
 import { Card, EmptyState, RunButtons } from "../components.jsx";
 import { IconClock, IconSpark } from "../icons.jsx";
+import AIFixAction from "../AIFixAction.jsx";
 import { formatDur, runDotClass, summarizeRuns } from "../pipeline.js";
 
 function useNow(active) {
@@ -39,7 +40,7 @@ function StageRow({ stage, buildProgress }) {
   );
 }
 
-export default function OverviewView({ status, isRunning, busy, actions, setView }) {
+export default function OverviewView({ status, isRunning, busy, actions, setView, flash }) {
   const branch = status?.git?.branch || "-";
   const task = status?.task;
   const pipeline = status?.pipeline;
@@ -213,7 +214,7 @@ export default function OverviewView({ status, isRunning, busy, actions, setView
                         <span style={{ color: diag.ok ? "var(--success)" : "var(--danger)" }}>{diag.ok ? "완료" : "실패"}</span>
                         {diag.providerName && <span className="cell-dim">· {diag.providerName}</span>}
                       </>
-                    ) : <span className="cell-dim">—</span>}
+                    ) : <span className="cell-dim">{run.result === "failed" && status?.ai?.inProgress?.includes(run.logName) ? "진단 중..." : "—"}</span>}
                   </div>
                 </div>
               );
@@ -243,6 +244,7 @@ export default function OverviewView({ status, isRunning, busy, actions, setView
                     <span>Provider: {diag.providerName || diag.providerId}</span>
                     <span>신뢰도: {diag.confidence}</span>
                   </div>
+                  <AIFixAction run={run} status={status} flash={flash} />
                 </div>
               </Card>
             );

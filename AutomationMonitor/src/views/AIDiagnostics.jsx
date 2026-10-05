@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { api } from "../api.js";
+import { api, formatDate } from "../api.js";
 import { IconSpark, IconCheck } from "../icons.jsx";
+import AIFixAction from "../AIFixAction.jsx";
 
 const DEFAULT_AI_CONFIG = {
   autoDiagnose: false,
@@ -48,7 +49,7 @@ function Row({ label, children, help }) {
   );
 }
 
-export default function AIDiagnosticsView({ flash }) {
+export default function AIDiagnosticsView({ flash, status }) {
   const [config, setConfig] = useState(null);
   const [providers, setProviders] = useState({});
   const [saving, setSaving] = useState(false);
@@ -57,6 +58,10 @@ export default function AIDiagnosticsView({ flash }) {
   // Model lists fetched from /models after a successful connection test, per provider.
   const [modelOptions, setModelOptions] = useState({});
   const [loadingModels, setLoadingModels] = useState(null);
+  const [diagnosing, setDiagnosing] = useState(false);
+  const recentFailedRuns = (status?.runs || []).filter((run) => run.result === "failed").slice(0, 5);
+  const savedDiagnostics = status?.ai?.diagnostics || {};
+  const inProgress = status?.ai?.inProgress || [];
 
   // Fetch a provider's model list into modelOptions so the Model field becomes a dropdown.
   const fetchModels = async (id, providerCfg) => {
@@ -150,6 +155,7 @@ export default function AIDiagnosticsView({ flash }) {
   };
 
   const runManualDiagnosis = async () => {
+    setDiagnosing(true);
     try {
       const result = await api("/api/ai/diagnose", { method: "POST" });
       if (result?.error) throw new Error(result.error);
@@ -157,7 +163,7 @@ export default function AIDiagnosticsView({ flash }) {
       flash("success", "AI 진단이 완료되었습니다");
     } catch (error) {
       flash("error", error.message || "AI 진단 실패");
-    }
+    } finally { setDiagnosing(false); }
   };
 
   if (!config) return <div className="loading" />;
@@ -168,6 +174,28 @@ export default function AIDiagnosticsView({ flash }) {
         <IconSpark />
         <h1 style={{ fontSize: 18, margin: 0 }}>AI 빌드 진단</h1>
       </div>
+
+      <Section title="최근 실패 실행 · AI 진단 결과">
+        {recentFailedRuns.length === 0 && <div style={{ fontSize: 12, color: "var(--text-mute)" }}>실패 실행 기록이 없습니다.</div>}
+        {recentFailedRuns.map((run) => {
+          const diagnosis = savedDiagnostics[run.logName];
+          const result = diagnosis?.diagnosis || diagnosis;
+          const running = inProgress.includes(run.logName);
+          return (
+            <div key={run.logName} style={{ borderTop: "1px solid var(--border)", padding: "12px 0", fontSize: 12, lineHeight: 1.5, overflowWrap: "anywhere" }}>
+              <div style={{ fontWeight: 600 }}>{run.id} · {run.reason}</div>
+              <div style={{ color: "var(--text-mute)", marginBottom: 8 }}>{running ? "AI 진단 중..." : diagnosis ? diagnosis.ok ? `진단 완료 · ${diagnosis.providerName || diagnosis.providerId} · ${formatDate(diagnosis.at)}` : "AI 진단 실패" : status?.ai?.autoDiagnose ? "자동 진단 대기 중" : "자동 진단 꺼짐 · 수동 진단을 실행하세요"}</div>
+              {diagnosis?.ok ? <>
+                <div style={{ fontWeight: 600 }}>{result.summary}</div>
+                <div><b>원인:</b> {result.rootCause}</div>
+                {result.affectedFiles?.length > 0 && <div><b>파일:</b> {result.affectedFiles.join(", ")}</div>}
+                <div style={{ marginTop: 8 }}><b>권장 해결:</b> {result.recommendedFix}</div>
+              </> : diagnosis && <div style={{ color: "var(--danger)" }}>{diagnosis.error}</div>}
+              {diagnosis?.ok && <AIFixAction run={run} status={status} flash={flash} />}
+            </div>
+          );
+        })}
+      </Section>
 
       <Section title="프로바이더 선택">
         <Row label="Primary Provider" help="빌드 실패 시 먼저 사용할 AI">
@@ -321,8 +349,8 @@ export default function AIDiagnosticsView({ flash }) {
         <button className="btn accent" disabled={saving} onClick={save}>
           {saving ? "저장 중..." : "설정 저장"}
         </button>
-        <button className="btn sm" onClick={runManualDiagnosis}>
-          최근 실패 로그 수동 진단
+        <button className="btn sm" disabled={diagnosing || inProgress.includes(recentFailedRuns[0]?.logName)} onClick={runManualDiagnosis}>
+          {diagnosing ? "AI 진단 중..." : "최근 실패 로그 수동 진단"}
         </button>
       </div>
 

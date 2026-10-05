@@ -12,6 +12,7 @@ import { createDeployManager } from "./deploy.js";
 import { createWorkspace, DEFAULT_RUN_OPTIONS, DEFAULT_BUILD_CONFIG, DEFAULT_AI_PROVIDERS, DEFAULT_AI_CONFIG } from "./workspace.js";
 import { createRepoRegistry } from "./repos.js";
 import { diagnoseRun } from "./ai/index.js";
+import { createFixManager } from "./ai/fix.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(__dirname, "..");
@@ -35,6 +36,7 @@ let installConfigPath = null;
 let workspace = null;
 let stateStore = null;
 let deployManager = null;
+let fixManager = null;
 
 let activeRun = null;
 // Timestamp of the last user-requested Stop Run. Lets pipeline status flip the
@@ -334,7 +336,7 @@ setInterval(refreshOutputSize, 30 * 60 * 1000);
 
 // Auto-deploy watcher — a new successful build_summary appears once per finished build,
 // regardless of whether the run came from the monitor or the scheduled task.
-setInterval(() => deployManager?.checkAutoDeploy().catch(() => {}), 60 * 1000);
+setInterval(() => { if (!fixManager?.getActive()) deployManager?.checkAutoDeploy().catch(() => {}); }, 60 * 1000);
 
 // Point every repo-scoped path/store at the selected UE clone. monitor-state.json and
 // workspace.json now live under that clone's own LocalBuilds/AutomationMonitor/ — each
@@ -363,6 +365,18 @@ async function activateRepo(targetPath) {
     machineUser: machineInfo.user,
     getOutputBytes: () => outputSize.bytes
   });
+  fixManager = createFixManager({
+    repoRoot, toolRoot, monitorLogRoot, store: stateStore, getAiConfig, tailFile,
+    getRun: async (logName) => {
+      await getStatus();
+      return lastPipelineStatus.runs.find((run) => run.logName === logName);
+    },
+    isBusy: async () => Boolean(activeRun || deployManager.getActive() || (await getTaskSummary()).state === "Running"),
+    onFinished: async (job) => {
+      ttlCache.clear();
+      await appendMonitorLog(`AI fix ${job.id} finished: ${job.status}`);
+    }
+  });
   ttlCache.clear();
   outputSize = { bytes: null, updatedAt: null };
   refreshOutputSize();
@@ -376,6 +390,7 @@ function deactivateRepo() {
   workspace = null;
   stateStore = null;
   deployManager = null;
+  fixManager = null;
   ttlCache.clear();
   outputSize = { bytes: null, updatedAt: null };
 }
@@ -683,7 +698,7 @@ async function getStatus() {
     alerts = { list, openCount: list.filter((a) => !a.acked).length, thresholds: ws.alerts?.thresholds };
   } catch {}
   return {
-    ai: sanitizeAiConfig(ai),
+    ai: { ...sanitizeAiConfig(ai), inProgress: [...autoDiagnoseInProgress], fixes: fixManager ? await fixManager.getState() : { active: null, history: [] } },
     alerts,
     runOptions,
     repos: await repoRegistry.load(),
@@ -705,6 +720,7 @@ async function getStatus() {
 }
 
 async function startRun(input) {
+  if (fixManager?.getActive()) return { ok: false, error: "AI 해결 작업이 끝난 후 빌드를 실행하세요." };
   if (!repoRoot) return { ok: false, error: "저장소를 먼저 선택하세요." };
   if (activeRun) {
     return { ok: false, error: `Automation is already running as PID ${activeRun.pid}.` };
@@ -741,6 +757,7 @@ async function startRun(input) {
     await appendMonitorLog(`Run Now process ${child.pid} exited with code ${code}`);
     await fs.appendFile(runLogPath, `\nProcess exited with code ${code}\n`, "utf8").catch(() => {});
     activeRun = null;
+    getStatus().catch((error) => appendMonitorLog(`Post-run status check failed: ${error.message}`));
   });
   child.on("error", async (error) => {
     await appendMonitorLog(`Run Now process failed to start: ${error.message}`);
@@ -877,6 +894,23 @@ async function serveStatic(req, res) {
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
+    if (url.pathname.startsWith("/api/ai/fix")) {
+      const local = ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(req.socket.remoteAddress);
+      const localHost = ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname);
+      const sameOrigin = !req.headers.origin || req.headers.origin === `http://${req.headers.host}` || (isDev && ["http://127.0.0.1:5173", "http://localhost:5173"].includes(req.headers.origin));
+      if (!local || !localHost || !sameOrigin) return sendJson(res, 403, { ok: false, error: "AI 직접 해결은 이 PC의 모니터에서만 실행할 수 있습니다." });
+      if (!fixManager) return sendJson(res, 400, { ok: false, error: "저장소를 먼저 선택하세요." });
+      if (url.pathname === "/api/ai/fix" && req.method === "GET") return sendJson(res, 200, await fixManager.getState());
+      if (url.pathname === "/api/ai/fix/log" && req.method === "GET") return sendJson(res, 200, { text: await fixManager.readLog(url.searchParams.get("id")) });
+      if (url.pathname === "/api/ai/fix" && req.method === "POST") {
+        if (!req.headers["content-type"]?.startsWith("application/json")) return sendJson(res, 415, { ok: false, error: "JSON 요청이 필요합니다." });
+        const body = await readBody(req);
+        return sendJson(res, 200, await fixManager.start(body.logName));
+      }
+    }
+    if (req.method !== "GET" && fixManager?.getActive() && (
+      url.pathname.startsWith("/api/repos") || ["/api/start-task", "/api/register-task", "/api/install-config", "/api/upstream/register", "/api/deploy/start"].includes(url.pathname)
+    )) return sendJson(res, 200, { ok: false, error: "AI 해결 작업이 끝난 후 다시 시도하세요." });
     if (url.pathname === "/api/status" && req.method === "GET") return sendJson(res, 200, await getStatus());
     if (url.pathname === "/api/branches" && req.method === "GET") return sendJson(res, 200, await getBranches());
     if (url.pathname === "/api/upstream/register" && req.method === "POST") return sendJson(res, 200, await registerUpstream(await readBody(req)));

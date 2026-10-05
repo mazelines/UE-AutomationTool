@@ -108,7 +108,7 @@ export async function diagnoseRun({ logRoot, run, repoInfo, aiConfig, tailFile }
     }
 
     const parsed = parseJsonResponse(result.text) || makeFallbackResponse(result.text, id);
-    if (!parsed.providerId) parsed.providerId = id;
+    parsed.providerId = id;
     return {
       ok: true,
       providerId: id,
