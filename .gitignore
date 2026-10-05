@@ -2,3 +2,17 @@
 .zcode/
 
 tmp-logs/
+
+# Local authentication and runtime settings must not be committed.
+.env
+.env.*
+!.env.example
+!.env.template
+*.pem
+*.p12
+*.pfx
+credentials.json
+client_secret*.json
+service-account*.json
+rclone.conf
+LocalBuilds/
