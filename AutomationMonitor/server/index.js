@@ -13,6 +13,7 @@ import { createWorkspace, DEFAULT_RUN_OPTIONS, DEFAULT_BUILD_CONFIG, DEFAULT_AI_
 import { createRepoRegistry } from "./repos.js";
 import { diagnoseRun } from "./ai/index.js";
 import { createFixManager } from "./ai/fix.js";
+import { ensureDebuggingTools } from "./debugging-tools.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(__dirname, "..");
@@ -1108,6 +1109,8 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 500, { error: error.message || String(error) });
   }
 });
+
+await ensureDebuggingTools();
 
 server.listen(port, host, () => {
   console.log(`UE6 automation monitor server listening on http://${host}:${port}`);

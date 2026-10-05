@@ -110,6 +110,7 @@ Clean/NoClean 실행, 일일 스케줄 시각, upstream/deps/project files/DDC �
 - Windows 10/11
 - [Node.js](https://nodejs.org/) — 설치된 Vite 버전의 요구 사항 충족 필요 (현재 Vite 8: 20.19+ 또는 22.12+)
 - Git, PowerShell 5.1+
+- Windows SDK Debugging Tools — 서버 시작 시 x64 도구를 확인하고, 없으면 winget으로 자동 설치합니다. 최초 설치에는 인터넷 연결과 Windows 관리자 권한이 필요할 수 있습니다.
 - [7-Zip](https://www.7-zip.org/) — 배포 압축용. `C:\Program Files\7-Zip\7z.exe`를 먼저 찾고, 없으면 `PATH`의 `7z`를 사용합니다.
 - 모니터링 대상: 로컬에 클론된 Unreal Engine 저장소 (`.git` 포함) — 저장소 선택기에서 등록
 - (선택) AI 진단 프로바이더: 로컬 Codex CLI 로그인 세션(`codex login`), 또는 OpenAI 호환 API 키 — 없으면 AI 진단만 비활성
@@ -130,6 +131,20 @@ Clean/NoClean 실행, 일일 스케줄 시각, upstream/deps/project files/DDC �
 | 종료 | `Stop.cmd` 또는 `stop.ps1` | — |
 
 개발 모드는 API 서버(`4174`)와 Vite HMR UI(`5173`) 두 프로세스를 띄웁니다. 운영 모드는 `vite build` 후 단일 Node 프로세스가 UI와 API를 함께 제공합니다. `Stop.cmd`는 두 포트(`4174`·`5173`)의 프론트엔드·백엔드를 한 번에 종료합니다. `Start-Server.bat`는 PowerShell 래퍼 없이 순수 배치로 같은 운영 동작(의존성 설치·UI 빌드·포트 정리 후 서버 실행)을 수행하며, `--no-build`, `--no-browser`, 포트 번호를 인자로 받습니다.
+
+### Windows SDK Debugging Tools 자동 설치
+
+개발·운영 모드 모두 API 서버 시작 시 `C:\Program Files (x86)\Windows Kits\10\Debuggers\x64`의 `pdbcopy.exe`, `windbg.exe`, `cdb.exe`, `dbghelp.dll`을 확인합니다. 이미 설치되어 있으면 설치를 건너뛰며, 일부 DLL만 있는 경우에도 필요한 도구를 추가 설치합니다.
+
+도구가 없으면 winget의 `Microsoft.WindowsSDK.10.0.26100` 패키지에서 **Debugging Tools for Windows** 구성 요소만 설치합니다. 패키지·원본 약관에 자동 동의하며, 자동 재부팅은 하지 않습니다. 설치하는 동안 서버 접속이 지연될 수 있고 설치 상태는 서버 터미널에 표시됩니다. Windows 관리자 권한 요청이 나타나면 승인하세요. 설치 대기는 최대 15분이며, 설치 완료 후 실행 파일을 다시 확인합니다.
+
+winget이 없거나 네트워크·권한 문제로 설치가 실패하면 서버는 계속 실행합니다. 서버 터미널에 오류와 수동 설치 명령을 남기며 다음 서버 실행 때 다시 시도합니다. 도구가 없는 상태에서는 Installed Build가 실패할 수 있습니다. 수동 설치가 필요하면 관리자 터미널에서 다음 명령을 실행하세요.
+
+```powershell
+winget install --id Microsoft.WindowsSDK.10.0.26100 --exact --force --override "/features OptionId.WindowsDesktopDebuggers /quiet /norestart" --accept-package-agreements --accept-source-agreements --disable-interactivity
+```
+
+winget을 사용할 수 없으면 [Microsoft의 Debugging Tools 설치 안내](https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/debugger-download-tools)에 따라 Windows SDK 설치 프로그램에서 **Debugging Tools for Windows**를 선택하세요. 이 자동 설치는 SDK 디버깅 도구를 준비하며, Smart App Control 차단 문제는 아래의 별도 해결 절차를 따라야 합니다.
 
 ### 수동 실행
 
@@ -340,11 +355,11 @@ Error while trying to create file pattern match for '...': Source file '...' doe
 `AutomationMonitor` 디렉터리에서 실행합니다.
 
 ```powershell
-node --test server/ai/fix.test.js server/deploy.test.js server/pipeline.test.js
+node --test server/ai/fix.test.js server/deploy.test.js server/pipeline.test.js server/debugging-tools.test.js
 npm.cmd run build
 ```
 
-테스트는 실제 Google Drive 업로드나 AI 수정을 실행하지 않고 작업 흐름·실패 처리·중복 실행 방지 등을 검증합니다.
+테스트는 실제 Google Drive 업로드·AI 수정·SDK 설치를 실행하지 않고 작업 흐름·실패 처리·중복 실행 방지와 Debugging Tools 설치 분기를 검증합니다.
 
 ## 라이선스
 
