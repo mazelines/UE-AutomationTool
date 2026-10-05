@@ -278,6 +278,28 @@ AutomationMonitor/
 
 ## 트러블슈팅
 
+### App Control 오류로 빌드가 시작되지 않을 때 (`0x800711C7`)
+
+**증상**: `Check application control policy failed`와 `Smart App Control is ON`이 표시되거나, AutomationTool의 `Initializing script modules` 단계에서 `SteamDeck.Automation.dll` 등 로컬 빌드 DLL을 로드하지 못하고 `0x800711C7` 오류가 발생합니다. 현재 스크립트의 사전 검사는 Smart App Control 상태가 `On`이면 빌드를 시작하기 전에 중단합니다.
+
+**원인**: Windows Smart App Control 또는 조직의 App Control 정책이 로컬에서 생성한 신뢰되지 않은 DLL의 실행을 차단할 수 있습니다. 원인에 따라 설정을 바꾸거나 해당 정책에 맞게 파일을 서명·허용해야 합니다.
+
+**해결 순서**:
+
+1. PowerShell에서 현재 Smart App Control 상태를 확인합니다.
+
+   ```powershell
+   Get-MpComputerStatus | Select-Object SmartAppControlState
+   ```
+
+2. `On`이고 이 PC에서 보호 기능을 끄는 것이 허용된다면 **Windows 보안 → 앱 및 브라우저 컨트롤 → Smart App Control 설정 → 끄기**를 선택합니다. 이 변경은 Smart App Control의 앱 실행 보호를 비활성화합니다.
+3. 위 명령을 다시 실행해 `Off`로 반영됐는지 확인한 후 빌드를 다시 실행합니다. 설정 화면을 닫았거나 끄기를 선택했다는 사실만으로 적용됐다고 판단하지 마세요. 현재 상태 판단에는 `Get-MpComputerStatus`를 사용하며, 레지스트리의 CI 정책 값은 참고 정보입니다.
+4. `Off`인데도 실제 DLL 로딩에서 같은 차단 오류가 발생하면 작업을 저장하고 재부팅한 뒤 상태와 빌드를 다시 확인합니다. 여전히 차단되면 **이벤트 뷰어 → 응용 프로그램 및 서비스 로그 → Microsoft → Windows → CodeIntegrity → Operational**에서 차단 파일과 정책을 확인하고, 조직의 App Control for Business(WDAC)·AppLocker 정책 담당자에게 허용 정책 또는 서명 적용을 요청하세요. [Microsoft App Control 문제 해결 안내](https://learn.microsoft.com/en-us/windows/security/application-security/application-control/app-control-for-business/operations/appcontrol-debugging-and-troubleshooting)
+
+**재부팅 판단**: 상태가 `On`인 채로 재부팅만 해서는 사전 검사 실패를 해결할 수 없습니다. 먼저 설정 변경이 `Off`로 반영되는지 확인하세요. `Off` 반영 후 바로 재시도할 수 있으며, 계속 차단되거나 Windows가 재시작을 요구할 때 재부팅을 진행합니다. 재부팅으로 모든 App Control 정책이 해제되는 것은 아닙니다.
+
+Smart App Control에는 개별 앱만 허용하는 예외 기능이 없습니다. 조직이 관리하는 WDAC·AppLocker의 허용 정책과는 구분해야 합니다. 최근 Windows 업데이트에서는 Smart App Control을 Windows 재설치 없이 다시 켤 수 있으며, 해당 PC에서 제공되는 설정을 확인하세요. [Microsoft Smart App Control FAQ](https://support.microsoft.com/en-us/windows/security/threat-malware-protection/smart-app-control-frequently-asked-questions)
+
 ### Fetch에서 실패했는데 AI 진단 결과가 보이지 않을 때
 
 AI Diagnostics에서 **빌드 실패 시 자동으로 AI 진단 실행**을 켜고 **설정 저장**을 누르세요. **최근 실패 실행 · AI 진단 결과**에서 진단 중·완료·실패 상태를 확인합니다. Fetch는 빌드 출력 로그가 없어도 래퍼 로그로 진단할 수 있으며 Git 원문 오류가 래퍼 로그에 기록됩니다. 진단 실패 시 프로바이더 연결 테스트 또는 수동 진단을 사용하세요.
