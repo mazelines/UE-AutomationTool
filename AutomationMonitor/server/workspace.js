@@ -139,6 +139,7 @@ function defaultChannels(hostname) {
 
 function defaultTargets() {
   return [
+    { id: "gdrive", badge: "GD", kind: "Google Drive · desktop sync folder", name: "Google Drive", path: "", real: true },
     { id: "smb", badge: "SMB", kind: "SMB share · team-wide", name: "", path: "", real: true },
     { id: "p4", badge: "P4", kind: "Perforce depot · stub", name: "//depot/UE6/InstalledBuild", path: "", real: false }
   ];
@@ -196,6 +197,12 @@ export function createWorkspace({ filePath, iniPath, statePath, hostname }) {
       cache = JSON.parse(await fs.readFile(filePath, "utf8"));
       applyBuildDefaults(cache);
       applyAiDefaults(cache);
+      cache.deploy = cache.deploy || {};
+      cache.deploy.targets = cache.deploy.targets || defaultTargets();
+      if (!cache.deploy.targets.some((target) => target.id === "gdrive")) {
+        cache.deploy.targets.push(defaultTargets().find((target) => target.id === "gdrive"));
+      }
+      cache.deploy.targets.find((target) => target.id === "gdrive").kind = "Google Drive · desktop sync folder";
       cacheMtime = stat.mtimeMs;
       return cache;
     }

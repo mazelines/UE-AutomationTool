@@ -55,6 +55,13 @@ export default function DeployView({ flash }) {
     }
   }
 
+  async function changeAutoTarget(targetId) {
+    try {
+      const saved = await api("/api/deploy/auto", { method: "POST", body: JSON.stringify({ enabled: auto.enabled, targetId }) });
+      setData((current) => ({ ...current, auto: saved }));
+    } catch (error) { flash("error", error.message); }
+  }
+
   async function deploy(targetId) {
     setBusy(true);
     try {
@@ -135,7 +142,7 @@ export default function DeployView({ flash }) {
               <span className="cell-dim">{formatDate(artifact.builtAt?.replace(/(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/, "$1-$2-$3T$4:$5:$6"))}</span>
               <div style={{ display: "flex", gap: 7, justifyContent: "flex-end" }}>
                 {artifact.current && (
-                  <button className="btn accent sm" disabled={busy || Boolean(active)} onClick={() => deploy("smb")}>Deploy</button>
+                  <button className="btn accent sm" disabled={busy || Boolean(active)} onClick={() => deploy(auto.targetId || "smb")}>Deploy</button>
                 )}
               </div>
             </div>
@@ -151,12 +158,15 @@ export default function DeployView({ flash }) {
               <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 12.5, fontWeight: 600 }}>빌드 성공 시 자동 배포</div>
-                  <div style={{ fontSize: 11, color: "var(--text-mute)" }}>새 CURRENT 아티팩트를 Engine.{format}으로 압축해 SMB 타깃에 배포</div>
+                  <div style={{ fontSize: 11, color: "var(--text-mute)" }}>새 빌드를 압축해 선택한 타깃에 배포 · Google Drive는 릴리스 노트도 업로드</div>
                 </div>
                 <button className={`switch${auto.enabled ? " on" : ""}`} onClick={toggleAuto}>
                   <span className="knob" />
                 </button>
               </div>
+              <select aria-label="자동 배포 타깃" value={auto.targetId || "smb"} disabled={Boolean(active)} onChange={(event) => changeAutoTarget(event.target.value)} style={inputStyle}>
+                {targets.filter((target) => target.real).map((target) => <option key={target.id} value={target.id}>{target.name || target.kind}</option>)}
+              </select>
               <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
                 <div style={{ flex: 1, fontSize: 11.5, color: "var(--text-dim)" }}>압축 형식</div>
                 <select
@@ -183,7 +193,7 @@ export default function DeployView({ flash }) {
                     </div>
                     <input
                       value={draft}
-                      placeholder="\\\\nas\\share\\UE6 · F:\\UnrealEngine\\Deploy\\UE6"
+                      placeholder={target.id === "gdrive" ? "G:\\내 드라이브\\PublicShare\\UnrealEngine6" : "\\\\nas\\share\\UE6 · F:\\UnrealEngine\\Deploy\\UE6"}
                       autoFocus
                       onChange={(event) => setDraft(event.target.value)}
                       onKeyDown={(event) => { if (event.key === "Enter") commitEdit(target); if (event.key === "Escape") setEditingId(null); }}
@@ -194,6 +204,7 @@ export default function DeployView({ flash }) {
                       <button className="btn sm" onClick={() => setBrowsing(true)}>찾아보기</button>
                       <button className="btn accent sm" onClick={() => commitEdit(target)}>저장</button>
                     </div>
+                    {target.id === "gdrive" && <div style={{ fontSize: 11, color: "var(--text-mute)", marginTop: 10 }}>Google Drive 데스크톱 앱의 동기화 폴더를 지정하세요. 배포 완료는 폴더 저장 완료이며, 클라우드 업로드 상태는 Drive 앱에서 확인하세요.</div>}
                   </div>
                 );
               }
@@ -212,7 +223,7 @@ export default function DeployView({ flash }) {
                       <div style={{ fontSize: 11, color: "var(--text-mute)" }}>{target.kind}</div>
                     </div>
                     {last ? (
-                      <span className={`tag-pill ${last.ok ? "success" : "warn"}`}>{last.ok ? "Synced" : "Failed"}</span>
+                      <span className={`tag-pill ${last.ok ? "success" : "warn"}`}>{last.ok ? target.id === "gdrive" ? "Saved" : "Synced" : "Failed"}</span>
                     ) : (
                       <span className="tag-pill mute">{target.real ? "Not synced" : "Stub"}</span>
                     )}
@@ -248,7 +259,7 @@ export default function DeployView({ flash }) {
                     <span style={{ fontFamily: "var(--font-mono)", color: "var(--text-dim)" }}>{entry.target}</span>
                   </div>
                   <div style={{ fontSize: 11.5, color: "var(--text-mute)", marginTop: 3, fontFamily: "var(--font-mono)" }}>
-                    {formatDate(entry.at)} · by {entry.by}{entry.ok ? "" : entry.code != null ? ` · 7z ${entry.code}` : ` · robocopy ${entry.robocopyCode}`}
+                    {formatDate(entry.at)} · by {entry.by}{entry.ok ? "" : entry.error ? ` · ${entry.error}` : entry.code != null ? ` · 7z ${entry.code}` : ` · robocopy ${entry.robocopyCode}`}
                   </div>
                 </div>
               </div>

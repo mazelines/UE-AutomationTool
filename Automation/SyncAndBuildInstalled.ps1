@@ -47,7 +47,10 @@ function Invoke-LoggedStep {
 function Invoke-Git {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
 
-    & git @Arguments
+    # Native stderr is otherwise missing from PS 5.1 transcripts when the monitor
+    # redirects the wrapper process. Render it as host output for AI diagnosis.
+    $ErrorActionPreference = 'Continue'
+    & git @Arguments 2>&1 | ForEach-Object { Write-Host $_.ToString() }
     if ($LASTEXITCODE -ne 0) {
         throw "git $($Arguments -join ' ') failed with exit code $LASTEXITCODE"
     }
@@ -232,6 +235,8 @@ try {
         }
     }
 
+    $releaseBaseCommit = (& git rev-parse HEAD)
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve release notes base commit.' }
     if (-not $SkipUpstreamSync) {
         Invoke-LoggedStep 'Merge upstream into local branch' {
             if ($AllowMergeCommit) {
@@ -363,6 +368,31 @@ try {
 
     if ($script:buildExitCode -ne 0) {
         throw "Installed build failed with exit code $script:buildExitCode"
+    }
+    Invoke-LoggedStep 'Write release notes' {
+        $releaseHead = (& git rev-parse HEAD)
+        if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve release notes head commit.' }
+        $notesDirectory = if ($config['Paths.LogDirectory']) { $config['Paths.LogDirectory'] } else { 'LocalBuilds\Logs' }
+        if (-not [System.IO.Path]::IsPathRooted($notesDirectory)) { $notesDirectory = Join-Path $RepoRoot $notesDirectory }
+        New-Item -ItemType Directory -Force -Path $notesDirectory | Out-Null
+        $previousEncoding = [Console]::OutputEncoding
+        try {
+            [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding
+            $commits = @(& git -c i18n.logOutputEncoding=utf-8 log --reverse '--format=commit %h%nAuthor: %an%nDate: %aI%n%B' "$releaseBaseCommit..$releaseHead")
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot read release commit list.' }
+            $changedFiles = @(& git -c core.quotepath=false diff --name-status $releaseBaseCommit $releaseHead)
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot read release changed files.' }
+        } finally { [Console]::OutputEncoding = $previousEncoding }
+        $notes = @(
+            "Installed Build Release Notes - $buildTimestamp",
+            "Branch: $Branch", "Upstream: $UpstreamRemote/$UpstreamBranch",
+            "Before merge: $releaseBaseCommit", "Built commit: $releaseHead", '',
+            'Merged commits:', $(if ($commits.Count) { $commits } else { 'No new commits (upstream sync skipped or already up to date).' }), '',
+            'Changed files:', $(if ($changedFiles.Count) { $changedFiles } else { 'No file changes.' })
+        )
+        $notesPath = Join-Path $notesDirectory "releasseNote_$buildTimestamp.txt"
+        [System.IO.File]::WriteAllLines($notesPath, [string[]]$notes, (New-Object System.Text.UTF8Encoding($false)))
+        Write-Host "Release notes: $notesPath"
     }
 } finally {
     Pop-Location
