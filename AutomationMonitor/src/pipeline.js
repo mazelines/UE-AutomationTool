@@ -1,4 +1,5 @@
 export const STAGE_SHORT = {
+  "Check application control policy": "App control",
   "Validate repository state": "Validate",
   "Configure upstream remote": "Upstream",
   "Fetch origin and upstream": "Fetch",

@@ -3,6 +3,7 @@ import path from "node:path";
 
 // Stage names must match Invoke-LoggedStep names in Automation/SyncAndBuildInstalled.ps1.
 export const STAGE_NAMES = [
+  "Check application control policy",
   "Validate repository state",
   "Configure upstream remote",
   "Fetch origin and upstream",
@@ -18,11 +19,23 @@ export const STAGE_NAMES = [
 ];
 
 // Relative weight of each stage in the overall progress bar (build dominates).
-const STAGE_WEIGHTS = [4, 2, 8, 12, 3, 1, 4, 8, 20, 3, 160, 6];
+const STAGE_WEIGHTS = [1, 4, 2, 8, 12, 3, 1, 4, 8, 20, 3, 160, 6];
 const TOTAL_WEIGHT = STAGE_WEIGHTS.reduce((a, b) => a + b, 0);
-const BUILD_STAGE = "Build Win64 installed engine";
+export const BUILD_STAGE = "Build Win64 installed engine";
 
-const STEP_LINE = /^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] (START|DONE)\s+(.+)$/;
+const STEP_LINE = /^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] (START|DONE|FAILED)\s+(.+)$/;
+
+// DONE/FAILED lines carry a one-line "(Ns)" duration (FAILED also appends the exception
+// message) — strip the suffix so stage lookups match the START line of the same step.
+function stepName(text) {
+  // Tolerant tail parse: "<name> (Ns)" plus any trailing text (legacy inline messages) —
+  // the trailing text is returned so a FAILED line keeps its message even without FAILED-MSG.
+  const done = /^(.*?)\s*\((\d+)s\)\s*(.*)$/.exec(text.trim());
+  return done
+    ? { name: done[1], seconds: Number(done[2]), rest: done[3] || "" }
+    : { name: text.trim(), seconds: null, rest: "" };
+}
+
 const TRANSCRIPT_END = /Windows PowerShell (기록 끝|transcript end)/;
 
 function toIso(stamp) {
@@ -36,18 +49,29 @@ export function parseWrapperLog(text) {
   let branch = "";
   let buildOutputLog = "";
   for (const line of text.split(/\r?\n/)) {
+    // Exception text rides on its own line (see Invoke-LoggedStep) so ")...s)-like" tails in
+    // messages can't corrupt the "(Ns)" duration parsing of the FAILED line itself.
+    const failedMsg = /^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] FAILED-MSG (.+)$/.exec(line);
+    if (failedMsg) {
+      const open = [...stages].reverse().find((s) => s.failed && !s.error);
+      if (open) open.error = failedMsg[1].trim();
+      continue;
+    }
     const step = STEP_LINE.exec(line);
     if (step) {
       const at = toIso(step[1]);
+      const { name, seconds, rest } = stepName(step[3]);
       if (step[2] === "START") {
-        stages.push({ name: step[3].trim(), startAt: at, endAt: null, seconds: null });
+        stages.push({ name, startAt: at, endAt: null, seconds: null });
       } else {
-        const done = /^(.*?)\s*\((\d+)s\)$/.exec(step[3].trim());
-        const name = done ? done[1] : step[3].trim();
         const open = [...stages].reverse().find((s) => s.name === name && !s.endAt);
         if (open) {
           open.endAt = at;
-          open.seconds = done ? Number(done[2]) : null;
+          open.seconds = seconds;
+          if (step[2] === "FAILED") {
+            open.failed = true;
+            if (rest) open.error = rest;
+          }
         }
       }
       continue;
@@ -150,7 +174,13 @@ export async function buildPipelineStatus({ logRoot, logs, tailFile, isMonitorRu
 
     let result;
     let reason = "";
-    if (!parsed.ended) {
+    // A FAILED step line is authoritative — the wrapper prints it only when the step threw,
+    // so don't let a missing transcript-end marker downgrade this to "aborted".
+    const failedStage = parsed.stages.find((s) => s.failed);
+    if (failedStage) {
+      result = "failed";
+      reason = `${failedStage.name} failed`;
+    } else if (!parsed.ended) {
       const startedMs = parsed.startedAt ? Date.parse(parsed.startedAt) : null;
       const stopApplies = stopCutoff !== null && (startedMs === null || startedMs <= stopCutoff);
       const running = !stopApplies && isLatest && (isMonitorRunActive || isTaskRunning || recentlyTouched);
@@ -170,7 +200,7 @@ export async function buildPipelineStatus({ logRoot, logs, tailFile, isMonitorRu
       else if (result === "running") reason = "In progress";
       else if (result === "failed") {
         const openStage = parsed.stages.find((s) => !s.endAt);
-        if (openStage) reason = `${openStage.name} failed`;
+        if (openStage && openStage.name !== BUILD_STAGE) reason = `${openStage.name} failed`;
         else if (buildStage) {
           const exitCode = await readBuildExit(logRoot, parsed.buildOutputLog, tailFile);
           reason = exitCode !== null && exitCode !== 0 ? `Build exited with code ${exitCode}` : "Build failed";
@@ -209,6 +239,7 @@ export async function buildPipelineStatus({ logRoot, logs, tailFile, isMonitorRu
       const stages = STAGE_NAMES.map((name) => {
         const hit = parsed.stages.find((s) => s.name === name);
         if (!hit) return { name, status: running ? "pending" : "skipped", seconds: null };
+        if (hit.failed) return { name, status: "failed", seconds: hit.seconds, error: hit.error };
         if (hit.endAt) return { name, status: "done", seconds: hit.seconds };
         return {
           name,
@@ -218,7 +249,7 @@ export async function buildPipelineStatus({ logRoot, logs, tailFile, isMonitorRu
       });
 
       let buildProgress = null;
-      const activeIdx = stages.findIndex((s) => s.status === "active" || s.status === "stopped");
+      const activeIdx = stages.findIndex((s) => ["active", "stopped", "failed"].includes(s.status));
       if (parsed.buildOutputLog && stages[STAGE_NAMES.indexOf(BUILD_STAGE)].status !== "pending") {
         try {
           const tail = await tailFile(parsed.buildOutputLog, 60);

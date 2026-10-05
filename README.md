@@ -185,25 +185,26 @@ AutomationMonitor/
 
 - **프론트엔드**: React + Vite. 5초마다 `/api/status` 폴링.
 - **백엔드**: 순수 Node `http` 서버. PowerShell·`git`·`7z` 호출은 현재 활성 저장소를 대상으로 실행. 자동 배포 워처는 1분마다 새 CURRENT 아티팩트를 확인.
-- **파이프라인 파싱**: `SyncAndBuildInstalled.ps1` 래퍼 로그의 `START`/`DONE` 단계와 UBT 빌드 로그를 합쳐 진행률 계산.
+- **파이프라인 파싱**: `SyncAndBuildInstalled.ps1` 래퍼 로그의 `START`/`DONE`/`FAILED` 단계와 UBT 빌드 로그를 합쳐 진행률 계산.
 - **설정**: UI 편집 값은 활성 저장소의 `LocalBuilds/AutomationMonitor/workspace.json`에 저장합니다. `install_build_config.ini`는 초기 설정 이관 및 이전 스크립트 호환용입니다. ACK·배포·AI 해결 이력은 같은 폴더의 `monitor-state.json`에 저장합니다.
 
 ### 파이프라인 단계
 
-다음 12단계는 대시보드 진행률에 표시되는 단계입니다. 성공 후 스크립트에서 `Write release notes`를 추가 실행하며, 이 단계는 현재 진행률 목록에는 별도로 표시하지 않습니다.
+다음 13단계는 대시보드 진행률에 표시되는 단계입니다. 성공 후 스크립트에서 `Write release notes`를 추가 실행하며, 이 단계는 현재 진행률 목록에는 별도로 표시하지 않습니다.
 
-1. Validate repository state (sync 전 `Templates/`의 tracked 변경은 자동 discard — 빌드/에디터가 다시 쓰는 `DefaultEngine.ini`가 매번 sync를 막던 문제 해결)  
-2. Configure upstream remote  
-3. Fetch origin and upstream  
-4. Checkout build branch  
-5. Merge upstream into local branch  
-6. Check for merge conflict markers (컨플릭트 마커를 통째로 커밋한 "해결"이 push·빌드까지 진행되는 것을 사전 차단 — 수 초 만에 실패시키며 `-SkipUpstreamSync` 시에도 항상 실행)  
-7. Push synced branch to fork origin  
-8. Sync Unreal dependencies  
-9. Generate project files  
-10. Install build pre-processing  
-11. Build Win64 installed engine  
-12. Install build post-processing  
+1. Check application control policy (Smart App Control 사전 검사)
+2. Validate repository state (sync 전 `Templates/`의 tracked 변경은 자동 discard — 빌드/에디터가 다시 쓰는 `DefaultEngine.ini`가 매번 sync를 막던 문제 해결)
+3. Configure upstream remote
+4. Fetch origin and upstream
+5. Checkout build branch
+6. Merge upstream into local branch
+7. Check for merge conflict markers (컨플릭트 마커를 통째로 커밋한 "해결"이 push·빌드까지 진행되는 것을 사전 차단 — 수 초 만에 실패시키며 `-SkipUpstreamSync` 시에도 항상 실행)
+8. Push synced branch to fork origin
+9. Sync Unreal dependencies
+10. Generate project files
+11. Install build pre-processing
+12. Build Win64 installed engine
+13. Install build post-processing
 
 ## 설정 파일
 
@@ -339,7 +340,7 @@ Error while trying to create file pattern match for '...': Source file '...' doe
 `AutomationMonitor` 디렉터리에서 실행합니다.
 
 ```powershell
-node --test server/ai/fix.test.js server/deploy.test.js
+node --test server/ai/fix.test.js server/deploy.test.js server/pipeline.test.js
 npm.cmd run build
 ```
 

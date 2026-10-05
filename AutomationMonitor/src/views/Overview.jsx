@@ -27,11 +27,12 @@ function StageRow({ stage, buildProgress }) {
   const { name, status, seconds } = stage;
   const isBuild = name === "Build Win64 installed engine";
   const pct = isBuild && buildProgress?.total ? Math.round((buildProgress.done / buildProgress.total) * 100) : null;
-  const dotClass = status === "skipped" ? "pending" : status;
+  const statusClass = status === "failed" ? "stopped" : status;
+  const dotClass = status === "skipped" ? "pending" : statusClass;
   return (
     <div className="stage-row">
       <span className={`stage-dot ${dotClass}`} />
-      <span className={`stage-name-cell ${status}`}>{name}{status === "skipped" ? " · skipped" : ""}</span>
+      <span className={`stage-name-cell ${statusClass}`} title={stage.error || undefined}>{name}{status === "skipped" ? " · skipped" : ""}</span>
       {status === "active" && pct !== null && (
         <span className="stage-mini-track"><span className="stage-mini-bar" style={{ width: `${pct}%` }} /></span>
       )}
@@ -160,7 +161,7 @@ export default function OverviewView({ status, isRunning, busy, actions, setView
                 <div className="overall-wrap">
                   <div className="overall-meta">
                     <span>
-                      Stage {pipeline.currentStage != null ? pipeline.currentStage + 1 : "-"} / 11 ·{" "}
+                      Stage {pipeline.currentStage != null ? pipeline.currentStage + 1 : "-"} / {pipeline.stages.length} ·{" "}
                       <span className="stage-name">{pipeline.currentStage != null ? pipeline.stages[pipeline.currentStage]?.name : "-"}</span>
                     </span>
                     <span className="pct">{pipeline.overallPct}%</span>

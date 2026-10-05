@@ -18,24 +18,25 @@ function PipelineFlow({ pipeline }) {
       <div className="flow-wrap">
         {stages.map((stage, index) => {
           const prevStarted = (s) => s && s.status !== "pending";
+          const isFailed = stage.status === "failed";
           const nodeClass =
             stage.status === "done" || stage.status === "skipped" ? "done"
-              : stage.status === "active" ? "active"
-                : stage.status === "stopped" ? "stopped" : "";
+              : isFailed || stage.status === "stopped" ? "stopped"
+                : stage.status === "active" ? "active" : "";
           const leftClass = index === 0 ? "none" : stages[index].status !== "pending" ? "done" : "";
           const rightClass =
             index === stages.length - 1 ? "none" : prevStarted(stages[index + 1]) || stage.status === "done" || stage.status === "skipped" ? "done" : "";
-          const labelClass = stage.status === "pending" ? "pending" : stage.status === "stopped" ? "stopped" : "";
+          const labelClass = stage.status === "pending" ? "pending" : isFailed || stage.status === "stopped" ? "stopped" : "";
           return (
             <div key={stage.name} className="flow-stage">
               <div className="flow-line-row">
                 <span className={`flow-line ${leftClass}`} />
                 <span className={`flow-node ${nodeClass}`}>
-                  {stage.status === "done" || stage.status === "skipped" ? "✓" : stage.status === "stopped" ? "✕" : index + 1}
+                  {stage.status === "done" || stage.status === "skipped" ? "✓" : isFailed || stage.status === "stopped" ? "✕" : index + 1}
                 </span>
                 <span className={`flow-line ${rightClass}`} />
               </div>
-              <div className={`flow-label ${labelClass}`}>{STAGE_SHORT[stage.name] || stage.name}</div>
+              <div className={`flow-label ${labelClass}`} title={stage.error || undefined}>{STAGE_SHORT[stage.name] || stage.name}</div>
             </div>
           );
         })}

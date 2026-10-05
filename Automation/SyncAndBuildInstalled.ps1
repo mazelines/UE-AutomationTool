@@ -37,9 +37,22 @@ function Invoke-LoggedStep {
         [Parameter(Mandatory = $true)][scriptblock]$ScriptBlock
     )
 
+    # ponytail: the DONE label must never be printed for a failed step — a "DONE (42s)" on a
+    # failing step misled the post-mortem diagnosis (2026-10-05, SCC blocked SteamDeck.Automation.dll).
+    # Emit DONE with the exit code when the step succeeds, FAILED when the scriptblock throws,
+    # then rethrow so the transcript carries both the failing step and the original error.
     $startedAt = Get-Date
     Write-Host "[$($startedAt.ToString('yyyy-MM-dd HH:mm:ss'))] START $Name"
-    & $ScriptBlock
+    try {
+        & $ScriptBlock
+    } catch {
+        $finishedAt = Get-Date
+        # Message goes on its own MSG line: exception text can contain ")/s)-like" tails that
+        # would corrupt the "(Ns)" duration suffix parsing of the FAILED line itself.
+        Write-Host "[$($finishedAt.ToString('yyyy-MM-dd HH:mm:ss'))] FAILED $Name ($([int]($finishedAt - $startedAt).TotalSeconds)s)"
+        Write-Host "[$($finishedAt.ToString('yyyy-MM-dd HH:mm:ss'))] FAILED-MSG $($_.Exception.Message.Replace("`r", ' ').Replace("`n", ' '))"
+        throw
+    }
     $finishedAt = Get-Date
     Write-Host "[$($finishedAt.ToString('yyyy-MM-dd HH:mm:ss'))] DONE  $Name ($([int]($finishedAt - $startedAt).TotalSeconds)s)"
 }
@@ -150,6 +163,30 @@ try {
     Write-Host "Log: $logPath"
 
     Push-Location $RepoRoot
+
+    # ponytail: Smart App Control "On" blocks loading unsigned locally built .NET assemblies
+    # (SteamDeck.Automation.dll → 0x800711C7 at "Initializing script modules"), so the installed
+    # build can never start AutomationTool. Fail in seconds with an actionable message instead of
+    # an obscure policy error deep in BuildGraph. The setting must be changed manually in
+    # Windows Security → App & browser control → Smart App Control settings.
+    Invoke-LoggedStep 'Check application control policy' {
+        $sccState = $null
+        try { $sccState = (Get-MpComputerStatus -ErrorAction Stop).SmartAppControlState } catch { }
+        # The CI Policy registry value is only a hint (it can read stale after SCC was disabled);
+        # Get-MpComputerStatus is the authoritative live state, so it alone gates the hard failure.
+        $ciPolicy = $null
+        try {
+            $raw = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy' -ErrorAction Stop).VerifiedAndReputablePolicyState
+            $ciPolicy = @{ 0 = 'Off'; 1 = 'On'; 2 = 'Eval' }[[int]$raw]
+        } catch { }
+        Write-Host "Smart App Control state: $sccState (CI policy hint: $ciPolicy)"
+        if ($sccState -eq 'On') {
+            throw "Smart App Control is ON — Windows blocks loading the unsigned locally built AutomationTool script DLLs (0x800711C7). Turn it off (Windows Security → App & browser control → Smart App Control settings → Off), then rerun the build."
+        }
+        if ($sccState -eq 'Eval') {
+            Write-Host 'WARNING: Smart App Control is in evaluation mode; unsigned build output may be blocked intermittently.'
+        }
+    }
 
     Invoke-LoggedStep 'Validate repository state' {
         Invoke-Git rev-parse --is-inside-work-tree | Out-Null
@@ -303,6 +340,28 @@ try {
 
     $buildTimestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
     $script:buildExitCode = 0
+    $postBuild = Join-Path $scriptDirectory 'InstallBuild\_postbuild.bat'
+
+    # ponytail: _postbuild.bat saves the build summary for FAILED builds too (it reads
+    # BUILD_RESULT), so the env must be ready before the build step and the catch below runs
+    # post-processing even when the build step throws.
+    $env:BUILD_RESULT = '0'
+    $env:BUILT_DIRECTORY = $BuiltDirectory
+    $env:DISTRIBUTION_TYPE = "$($config['Distribution.DistributionType'])"
+    $env:ENGINE_VERSION = "$($config['Version.EngineVersion'])"
+    $buildNumber = $config['Version.BuildNumber']
+    if (-not $buildNumber -or $buildNumber -eq 'AUTO') { $buildNumber = $buildTimestamp }
+    $env:BUILD_NUMBER = $buildNumber
+    $env:BUILD_LABEL = "$($config['Version.BuildLabel'])"
+    $env:BUILD_TIMESTAMP = $buildTimestamp
+    $env:TARGET_PLATFORM = "$($config['Build.TargetPlatform'])"
+    $env:GAME_CONFIGURATIONS = "$($config['Build.GameConfigurations'])"
+    $env:HOST_PLATFORM_EDITOR_ONLY = "$($config['Build.HostPlatformEditorOnly'])"
+    $env:WITH_DDC = $WithDDC.ToString().ToLowerInvariant()
+    $env:VERBOSE = $Verbose.ToString().ToLowerInvariant()
+    $env:BUILD_LOG_DIR = if ($config['Paths.LogDirectory']) { $config['Paths.LogDirectory'] } else { 'LocalBuilds\Logs' }
+
+    try {
     Invoke-LoggedStep 'Build Win64 installed engine' {
         $uat = Join-Path $RepoRoot 'Engine\Build\BatchFiles\RunUAT.bat'
         $buildArgs = @(
@@ -335,30 +394,33 @@ try {
         }
         # ponytail: cmd-level redirect — a PS 5.1 transcript misses native output when stdout is piped, and an in-process 2>&1 wraps stderr lines into ErrorRecords under ErrorActionPreference=Stop.
         $flatArgs = ($buildArgs | ForEach-Object { if ($_ -match '\s' -and $_ -notlike '*"*') { "`"$_`"" } else { $_ } }) -join ' '
-        & cmd.exe /d /s /c "`"$uat`" $flatArgs > `"$buildOutputLog`" 2>&1 < NUL"
-        $script:buildExitCode = $LASTEXITCODE
+        try {
+            & cmd.exe /d /s /c "`"$uat`" $flatArgs > `"$buildOutputLog`" 2>&1 < NUL"
+        } finally {
+            # ponytail: capture $LASTEXITCODE in finally — if cmd.exe itself fails to launch, the
+            # statement throws before the assignment runs and the exit code would default to 0.
+            $script:buildExitCode = if ($LASTEXITCODE) { $LASTEXITCODE } else { 0 }
+        }
+        if ($script:buildExitCode -ne 0) {
+            # Fail the step immediately (FAILED label + monitor) instead of printing DONE and
+            # letting the run limp to a late generic throw. The wrapper catch runs _postbuild.bat.
+            throw "BuildGraph (RunUAT) exited with code $script:buildExitCode — see $buildOutputLog"
+        }
+    }
+    } catch {
+        if ($script:buildExitCode -eq 0) { $script:buildExitCode = 1 }
+        $env:BUILD_RESULT = "$script:buildExitCode"
+        if (Test-Path $postBuild) {
+            Write-Host 'Build step failed — running post-processing to save the failure summary.'
+            & cmd.exe /d /s /c "`"$postBuild`" < NUL"
+        }
+        throw
     }
 
-    $postBuild = Join-Path $scriptDirectory 'InstallBuild\_postbuild.bat'
     if (Test-Path $postBuild) {
         Invoke-LoggedStep 'Install build post-processing' {
-            $buildNumber = $config['Version.BuildNumber']
-            if (-not $buildNumber -or $buildNumber -eq 'AUTO') { $buildNumber = $buildTimestamp }
-
-            $env:BUILD_RESULT = "$script:buildExitCode"
-            $env:BUILT_DIRECTORY = $BuiltDirectory
-            $env:DISTRIBUTION_TYPE = "$($config['Distribution.DistributionType'])"
-            $env:ENGINE_VERSION = "$($config['Version.EngineVersion'])"
-            $env:BUILD_NUMBER = $buildNumber
-            $env:BUILD_LABEL = "$($config['Version.BuildLabel'])"
-            $env:BUILD_TIMESTAMP = $buildTimestamp
-            $env:TARGET_PLATFORM = "$($config['Build.TargetPlatform'])"
-            $env:GAME_CONFIGURATIONS = "$($config['Build.GameConfigurations'])"
-            $env:HOST_PLATFORM_EDITOR_ONLY = "$($config['Build.HostPlatformEditorOnly'])"
-            $env:WITH_DDC = $WithDDC.ToString().ToLowerInvariant()
-            $env:VERBOSE = $Verbose.ToString().ToLowerInvariant()
-            $env:BUILD_LOG_DIR = if ($config['Paths.LogDirectory']) { $config['Paths.LogDirectory'] } else { 'LocalBuilds\Logs' }
-
+            # Environment (BUILD_RESULT etc.) was set before the build step so the failed-build
+            # catch path can run this same script for its failure summary.
             & cmd.exe /d /s /c "`"$postBuild`" < NUL"
             if ($LASTEXITCODE -ne 0 -and $script:buildExitCode -eq 0) {
                 throw "_postbuild.bat failed with exit code $LASTEXITCODE"
