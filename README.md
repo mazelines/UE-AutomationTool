@@ -131,6 +131,10 @@ Clean/NoClean 실행, 일일 스케줄 시각, upstream/deps/project files/DDC �
 
 ### 원클릭 실행 (권장)
 
+API 서버는 **Windows 관리자 권한으로만 실행**됩니다. `Start-Dev.cmd`·`Start-Prod.cmd` 및 PowerShell 실행 파일은 일반 권한이면 UAC 승인을 요청하여 관리자 권한으로 다시 시작합니다. UAC를 취소하면 실행하지 않습니다. `Start-Server.bat`는 우클릭 → **관리자 권한으로 실행**을 선택하세요. `node server/index.js`·npm 명령으로 직접 실행할 때도 관리자 터미널이 필요하며, 일반 권한이면 서버가 오류 안내 후 종료합니다. 관리자 권한은 작업 스케줄러 등록과 필수 도구 설치에 사용됩니다.
+
+상시 실행 작업을 등록하는 `Register-MonitorServerTask.ps1`도 관리자 PowerShell에서 실행해야 합니다. 등록되는 서버 작업은 `Highest` 권한으로 실행합니다. 이전에 등록한 서버 작업은 스크립트를 다시 실행하여 갱신하세요.
+
 | 모드 | 실행 파일 | 접속 URL |
 |------|-----------|----------|
 | 개발 | `Start-Dev.cmd` 또는 `start-dev.ps1` | http://127.0.0.1:5173 |
@@ -363,7 +367,7 @@ Error while trying to create file pattern match for '...': Source file '...' doe
 `AutomationMonitor` 디렉터리에서 실행합니다.
 
 ```powershell
-node --test server/ai/fix.test.js server/deploy.test.js server/pipeline.test.js server/debugging-tools.test.js server/seven-zip.test.js
+node --test server/ai/fix.test.js server/deploy.test.js server/pipeline.test.js server/debugging-tools.test.js server/seven-zip.test.js server/administrator.test.js
 npm.cmd run build
 ```
 

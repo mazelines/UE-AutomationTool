@@ -1,5 +1,11 @@
 @echo off
 setlocal EnableExtensions
+powershell.exe -NoProfile -Command "if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { exit 1 }"
+if errorlevel 1 (
+    echo [admin] Right-click Start-Server.bat and select Run as administrator.
+    pause
+    exit /b 1
+)
 REM AutomationMonitor - pure-batch server launcher (production mode).
 REM Builds the UI, frees the port, then runs the Node server that serves
 REM UI + API on one port (default http://127.0.0.1:4174).

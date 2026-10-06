@@ -9,6 +9,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'ensure-administrator.ps1')
+Restart-AsAdministrator -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters
 Set-Location -LiteralPath $PSScriptRoot
 
 $apiPort = if ($env:UE6_MONITOR_PORT) { $env:UE6_MONITOR_PORT } else { '4174' }

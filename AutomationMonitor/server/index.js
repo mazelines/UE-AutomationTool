@@ -15,6 +15,11 @@ import { diagnoseRun } from "./ai/index.js";
 import { createFixManager } from "./ai/fix.js";
 import { ensureDebuggingTools } from "./debugging-tools.js";
 import { ensureSevenZip } from "./seven-zip.js";
+import { requireAdministrator } from "./administrator.js";
+
+// Guard every entry point, including direct node/npm and scheduled launches.
+try { await requireAdministrator(); }
+catch (error) { console.error(`[admin] ${error.message}`); process.exit(1); }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(__dirname, "..");
