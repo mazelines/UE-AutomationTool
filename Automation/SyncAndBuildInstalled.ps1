@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$RepoRoot,
     [string]$Branch,
@@ -437,24 +437,9 @@ try {
         $notesDirectory = if ($config['Paths.LogDirectory']) { $config['Paths.LogDirectory'] } else { 'LocalBuilds\Logs' }
         if (-not [System.IO.Path]::IsPathRooted($notesDirectory)) { $notesDirectory = Join-Path $RepoRoot $notesDirectory }
         New-Item -ItemType Directory -Force -Path $notesDirectory | Out-Null
-        $previousEncoding = [Console]::OutputEncoding
-        try {
-            [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding
-            $commits = @(& git -c i18n.logOutputEncoding=utf-8 log --reverse '--format=commit %h%nAuthor: %an%nDate: %aI%n%B' "$releaseBaseCommit..$releaseHead")
-            if ($LASTEXITCODE -ne 0) { throw 'Cannot read release commit list.' }
-            $changedFiles = @(& git -c core.quotepath=false diff --name-status $releaseBaseCommit $releaseHead)
-            if ($LASTEXITCODE -ne 0) { throw 'Cannot read release changed files.' }
-        } finally { [Console]::OutputEncoding = $previousEncoding }
-        $notes = @(
-            "Installed Build Release Notes - $buildTimestamp",
-            "Branch: $Branch", "Upstream: $UpstreamRemote/$UpstreamBranch",
-            "Before merge: $releaseBaseCommit", "Built commit: $releaseHead", '',
-            'Merged commits:', $(if ($commits.Count) { $commits } else { 'No new commits (upstream sync skipped or already up to date).' }), '',
-            'Changed files:', $(if ($changedFiles.Count) { $changedFiles } else { 'No file changes.' })
-        )
-        $notesPath = Join-Path $notesDirectory "releasseNote_$buildTimestamp.txt"
-        [System.IO.File]::WriteAllLines($notesPath, [string[]]$notes, (New-Object System.Text.UTF8Encoding($false)))
-        Write-Host "Release notes: $notesPath"
+        $notesGenerator = Join-Path $PSScriptRoot '..\AutomationMonitor\server\release-notes.js'
+        & node $notesGenerator $RepoRoot $releaseBaseCommit $releaseHead $buildTimestamp $notesDirectory $Branch "$UpstreamRemote/$UpstreamBranch"
+        if ($LASTEXITCODE -ne 0) { throw 'Release notes generation failed.' }
     }
 } finally {
     Pop-Location

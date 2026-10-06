@@ -57,7 +57,11 @@ export function createDeployManager({ repoRoot, monitorLogRoot, store, getTarget
           path: isCurrent ? outDir : null,
           sizeBytes: isCurrent ? getOutputBytes() : null,
           builtAt: timestamp,
-          releaseNotesPath: path.join(logDir, `releasseNote_${name.replace(/^build_summary_|\.txt$/g, "")}.txt`)
+          releaseNotesPath: (() => {
+            const stem = path.join(logDir, `releasseNote_${name.replace(/^build_summary_|\.txt$/g, "")}`);
+            // Existing builds keep their TXT notes; new builds wait for the atomic MD file.
+            return fssync.existsSync(`${stem}.md`) || !fssync.existsSync(`${stem}.txt`) ? `${stem}.md` : `${stem}.txt`;
+          })()
         });
       } catch {}
     }

@@ -25,7 +25,7 @@ async function fixture(t, { notes = true, compressionFails = false, missingDrive
   if (!missingDrive) await fs.mkdir(drive, { recursive: true });
   const timestamp = "20261005-123456";
   await fs.writeFile(path.join(logs, `build_summary_${timestamp}.txt`), `  Status: SUCCESS\n  Timestamp: ${timestamp}\n  Version: 6\n`);
-  if (notes) await fs.writeFile(path.join(logs, `releasseNote_${timestamp}.txt`), "Merged commits:\n한글 수정 사항");
+  if (notes) await fs.writeFile(path.join(logs, `releasseNote_${timestamp}.md`), "Merged commits:\n한글 수정 사항");
   const state = { deployHistory: [] };
   const calls = [];
   const manager = createDeployManager({
@@ -62,8 +62,8 @@ test("saves archive and UTF-8 notes in desktop sync folder, cleans staging, depl
   await f.manager.checkAutoDeploy();
   await f.wait();
   assert.equal(f.state.deployHistory[0].ok, true);
-  assert.deepEqual((await fs.readdir(f.drive)).sort(), ["Engine-20261005-123456.zip", "releasseNote_20261005-123456.txt"]);
-  assert.equal(await fs.readFile(path.join(f.drive, "releasseNote_20261005-123456.txt"), "utf8"), "Merged commits:\n한글 수정 사항");
+  assert.deepEqual((await fs.readdir(f.drive)).sort(), ["Engine-20261005-123456.zip", "releasseNote_20261005-123456.md"]);
+  assert.equal(await fs.readFile(path.join(f.drive, "releasseNote_20261005-123456.md"), "utf8"), "Merged commits:\n한글 수정 사항");
   assert.equal(f.state.deployHistory[0].delivery, "desktop-sync");
   assert.equal((await fs.readdir(f.logs)).some((name) => name.startsWith("gdrive-")), false);
   await f.manager.checkAutoDeploy();
@@ -77,6 +77,15 @@ test("compression failure is recorded and saves no files to Drive", async (t) =>
   assert.equal(f.state.deployHistory[0].ok, false);
   assert.deepEqual(await fs.readdir(f.drive), []);
   assert.equal(f.calls.length, 1);
+});
+
+test("legacy TXT notes remain deployable and Markdown takes precedence", async (t) => {
+  const f = await fixture(t);
+  const stem = path.join(f.logs, "releasseNote_20261005-123456");
+  await fs.rename(`${stem}.md`, `${stem}.txt`);
+  assert.equal((await f.manager.listArtifacts())[0].releaseNotesPath, `${stem}.txt`);
+  await fs.writeFile(`${stem}.md`, "# Markdown release notes");
+  assert.equal((await f.manager.listArtifacts())[0].releaseNotesPath, `${stem}.md`);
 });
 
 test("installer failure releases deployment lock and does not create staging", async (t) => {

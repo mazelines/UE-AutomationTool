@@ -64,9 +64,13 @@ Clean/NoClean 실행, 일일 스케줄 시각, upstream/deps/project files/DDC �
 | 파일 | 내용 |
 |------|------|
 | `Engine-yyyyMMdd-HHmmss.7z` 또는 `.zip` | 설치 빌드 압축 파일 |
-| `releasseNote_yyyyMMdd-HHmmss.txt` | 머지로 반영된 커밋 메시지·작성자·날짜와 변경 파일 목록 |
+| `releasseNote_yyyyMMdd-HHmmss.md` | Z.ai가 머지 내용을 기능별로 정리한 Markdown 릴리스 노트 |
 
-릴리스 노트는 업스트림 머지 직전 HEAD와 빌드 HEAD를 비교하여 성공한 빌드의 로그 폴더(`Paths.LogDirectory`, 기본 `LocalBuilds/Logs`)에 UTF-8로 저장합니다. 머지를 건너뛰거나 새 커밋이 없으면 그 사실을 기록합니다. `releasseNote` 철자는 요청한 파일명 형식입니다.
+릴리스 노트는 업스트림 머지 직전 HEAD와 빌드 HEAD를 비교하여 성공한 빌드의 로그 폴더(`Paths.LogDirectory`, 기본 `LocalBuilds/Logs`)에 UTF-8 Markdown으로 저장합니다. AI Diagnostics에 저장된 Z.ai의 활성화 여부·base URL·모델·API 키를 사용하므로 별도 인증 설정이 필요하지 않습니다. 빌드 스크립트가 Node 생성기를 직접 실행하므로 예약 빌드에서도 동작하며 모니터 서버 실행 여부와 무관합니다.
+
+Z.ai는 커밋 제목·본문, 순 변경 파일 통계와 코드 diff 표본을 근거로 **주요 변경·기능 및 개선·버그 수정·호환성 및 확인 사항**을 정리합니다. 관련 커밋 해시를 근거로 붙이며, 근거 없는 항목과 검증되지 않은 성능·호환성 주장은 작성하지 않도록 지시합니다. 입력은 최대 500개 커밋/100,000자, 통계 30,000자와 30개 텍스트 파일의 diff 60,000자 표본으로 제한하며 분석 한계를 명시하도록 합니다. 해당 변경 데이터는 설정된 Z.ai 서비스에 전송됩니다. API 키는 노트나 명령 인자에 넣지 않습니다.
+
+API 응답 대기는 최대 3분입니다. Z.ai가 비활성화·미설정 상태이거나 호출에 실패하면 AI 요약 실패 사실을 명시한 Git 근거 Markdown을 남겨 성공한 빌드의 배포를 계속할 수 있게 합니다. 새 커밋·파일 변경이 없으면 AI 호출 없이 기록합니다. 파일은 `.partial` 작성 후 `.md`로 교체하므로 배포가 생성 중인 노트를 복사하지 않습니다. 기존 빌드의 `.txt` 노트도 배포 호환성을 유지하며 `.md`가 있으면 우선합니다. `releasseNote` 철자는 기존 요청 형식을 유지합니다.
 
 압축은 대상 UE 저장소의 `LocalBuilds/AutomationMonitor` 임시 폴더에서 수행한 후 동기화 폴더에 복사합니다. 두 위치에 압축 파일 크기만큼 여유 공간이 필요합니다. 완료된 파일을 동기화하는 실제 업로드는 Google Drive 데스크톱 앱이 담당하며, 화면의 **Saved**는 폴더 저장 완료를 뜻합니다. 클라우드 업로드 완료는 Drive 앱에서 확인하세요.
 
@@ -338,7 +342,7 @@ AI Diagnostics에서 **빌드 실패 시 자동으로 AI 진단 실행**을 켜�
 
 ### Google Drive 배포가 실패하거나 업로드되지 않을 때
 
-Drive 앱의 로그인·실행 상태, 지정 폴더 존재 여부, 서버 계정에서의 경로 접근 및 디스크 여유 공간을 확인하세요. 릴리스 노트가 없다는 오류라면 해당 빌드의 `releasseNote_*.txt`가 생성됐는지 확인합니다. Saved인데 웹 Drive에 파일이 보이지 않으면 앱의 동기화 대기·오류 상태를 확인해야 합니다.
+Drive 앱의 로그인·실행 상태, 지정 폴더 존재 여부, 서버 계정에서의 경로 접근 및 디스크 여유 공간을 확인하세요. 릴리스 노트가 없다는 오류라면 해당 빌드의 `releasseNote_*.md`(기존 빌드는 `.txt`)가 생성됐는지 확인합니다. Saved인데 웹 Drive에 파일이 보이지 않으면 앱의 동기화 대기·오류 상태를 확인해야 합니다.
 
 ### 직접 해결 버튼이 동작하지 않을 때
 
@@ -371,7 +375,7 @@ Error while trying to create file pattern match for '...': Source file '...' doe
 `AutomationMonitor` 디렉터리에서 실행합니다.
 
 ```powershell
-node --test server/ai/fix.test.js server/deploy.test.js server/pipeline.test.js server/debugging-tools.test.js server/seven-zip.test.js server/administrator.test.js
+node --test server/*.test.js server/ai/fix.test.js
 npm.cmd run build
 ```
 
