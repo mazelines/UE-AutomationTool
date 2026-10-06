@@ -115,6 +115,10 @@ Clean/NoClean 실행, 일일 스케줄 시각, upstream/deps/project files/DDC �
 
 ## 요구 사항
 
+Upstream ahead는 저장소 활성화 시와 이후 **5분마다 자동 Fetch**하여 최신 원격 커밋을 반영합니다. 서버는 1분마다 실행 시점을 확인하며, 설정된 upstream 브랜치만 가져옵니다. Fetch 성공 시 Git 상태 캐시를 지워 화면의 다음 갱신에 반영합니다. 자동 Fetch는 병합·커밋·푸시를 수행하지 않습니다.
+
+빌드·예약 작업·AI 수정 중이거나 upstream 동기화가 비활성화된 저장소에서는 건너뜁니다. Fetch 중에는 새 빌드·AI 수정·저장소 전환을 잠시 차단합니다. 원격 인증은 기존 Git 인증을 사용하며 대화형 로그인 창은 띄우지 않습니다. Fetch는 최대 2분 대기하고, 실패 이유를 `monitor.log`에 기록한 뒤 다음 주기에 재시도합니다. 외부에서 직접 시작하는 Git 작업이나 예약 작업과의 동시 실행까지 잠그지는 않습니다.
+
 - Windows 10/11
 - [Node.js](https://nodejs.org/) — 설치된 Vite 버전의 요구 사항 충족 필요 (현재 Vite 8: 20.19+ 또는 22.12+)
 - Git, PowerShell 5.1+

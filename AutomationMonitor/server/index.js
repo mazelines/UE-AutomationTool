@@ -16,6 +16,7 @@ import { createFixManager } from "./ai/fix.js";
 import { ensureDebuggingTools } from "./debugging-tools.js";
 import { ensureSevenZip } from "./seven-zip.js";
 import { requireAdministrator } from "./administrator.js";
+import { createUpstreamFetcher } from "./upstream-fetch.js";
 
 // Guard every entry point, including direct node/npm and scheduled launches.
 try { await requireAdministrator(); }
@@ -345,6 +346,21 @@ setInterval(refreshOutputSize, 30 * 60 * 1000);
 // regardless of whether the run came from the monitor or the scheduled task.
 setInterval(() => { if (!fixManager?.getActive()) deployManager?.checkAutoDeploy().catch(() => {}); }, 60 * 1000);
 
+const upstreamFetcher = createUpstreamFetcher({
+  getContext: async () => {
+    const root = repoRoot;
+    const currentWorkspace = workspace;
+    if (!root || !currentWorkspace) return null;
+    const cfg = (await currentWorkspace.load()).build?.Run || {};
+    return { root, remote: cfg.UpstreamRemote || "upstream", branch: cfg.UpstreamBranch || "ue6-main",
+      disabled: String(cfg.SkipUpstreamSync).toLowerCase() === "true" };
+  },
+  isBusy: async () => Boolean(activeRun || fixManager?.getActive() || (await getTaskSummary()).state === "Running"),
+  onUpdated: async ({ root }) => { if (repoRoot === root) ttlCache.delete("gitSummary"); },
+  log: appendMonitorLog
+});
+setInterval(() => upstreamFetcher.check().catch((error) => console.error(error)), 60 * 1000);
+
 // Point every repo-scoped path/store at the selected UE clone. monitor-state.json and
 // workspace.json now live under that clone's own LocalBuilds/AutomationMonitor/ — each
 // registered repo keeps its own build config, run options, deploy targets and alert state.
@@ -378,7 +394,7 @@ async function activateRepo(targetPath) {
       await getStatus();
       return lastPipelineStatus.runs.find((run) => run.logName === logName);
     },
-    isBusy: async () => Boolean(activeRun || deployManager.getActive() || (await getTaskSummary()).state === "Running"),
+    isBusy: async () => Boolean(activeRun || upstreamFetcher.isActive() || deployManager.getActive() || (await getTaskSummary()).state === "Running"),
     onFinished: async (job) => {
       ttlCache.clear();
       await appendMonitorLog(`AI fix ${job.id} finished: ${job.status}`);
@@ -387,6 +403,7 @@ async function activateRepo(targetPath) {
   ttlCache.clear();
   outputSize = { bytes: null, updatedAt: null };
   refreshOutputSize();
+  upstreamFetcher.check().catch((error) => console.error(error));
 }
 
 function deactivateRepo() {
@@ -918,6 +935,9 @@ const server = http.createServer(async (req, res) => {
     if (req.method !== "GET" && fixManager?.getActive() && (
       url.pathname.startsWith("/api/repos") || ["/api/start-task", "/api/register-task", "/api/install-config", "/api/upstream/register", "/api/deploy/start"].includes(url.pathname)
     )) return sendJson(res, 200, { ok: false, error: "AI 해결 작업이 끝난 후 다시 시도하세요." });
+    if (req.method === "POST" && upstreamFetcher.isActive() && (
+      url.pathname.startsWith("/api/repos") || ["/api/run-now", "/api/start-task", "/api/upstream/register", "/api/install-config"].includes(url.pathname)
+    )) return sendJson(res, 200, { ok: false, error: "Upstream Fetch 진행 중입니다. 잠시 후 다시 시도하세요." });
     if (url.pathname === "/api/status" && req.method === "GET") return sendJson(res, 200, await getStatus());
     if (url.pathname === "/api/branches" && req.method === "GET") return sendJson(res, 200, await getBranches());
     if (url.pathname === "/api/upstream/register" && req.method === "POST") return sendJson(res, 200, await registerUpstream(await readBody(req)));
