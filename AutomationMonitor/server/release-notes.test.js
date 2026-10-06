@@ -10,7 +10,7 @@ async function fixture(t) {
   const config = path.join(root, "LocalBuilds", "AutomationMonitor");
   await fs.mkdir(config, { recursive: true });
   await fs.writeFile(path.join(config, "workspace.json"), JSON.stringify({ ai: { providers: { zai: {
-    enabled: true, baseUrl: "https://example.test/v4", model: "test", apiKey: "test-only"
+    enabled: true, baseUrl: "https://example.test/v4", model: "glm-5.3-flash", apiKey: "test-only"
   } } } }));
   return { repoRoot: root, outputDirectory: root, base: "a".repeat(40), head: "b".repeat(40),
     timestamp: "20261007-120000", branch: "main", upstream: "upstream/main", log: () => {},
@@ -21,6 +21,9 @@ test("AI sees commit bodies and net diff and saves Markdown atomically", async (
   const result = await writeReleaseNotes({ ...options, request: async (url, init) => {
     assert.equal(url, "https://example.test/v4/chat/completions");
     const body = JSON.parse(init.body);
+    assert.equal(body.max_tokens, 8192);
+    assert.equal(body.reasoning_effort, "low");
+    assert.deepEqual(body.thinking, { type: "enabled" });
     assert.match(body.messages[1].content, /abc123 Fix example/);
     assert.match(body.messages[1].content, /Diff/);
     return { ok: true, json: async () => ({ choices: [{ message: { content: "## 주요 변경\n\n빌드 개선 (abc123)." } }] }) };
