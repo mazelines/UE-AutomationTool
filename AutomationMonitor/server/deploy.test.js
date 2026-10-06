@@ -4,9 +4,17 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { EventEmitter } from "node:events";
-import { createDeployManager } from "./deploy.js";
+import { createDeployManager, resolveSevenZip } from "./deploy.js";
 
-async function fixture(t, { notes = true, compressionFails = false, missingDrive = false } = {}) {
+test("detects 7-Zip installed after the server started", () => {
+  let installed = false;
+  const exists = () => installed;
+  assert.equal(resolveSevenZip(exists), "7z");
+  installed = true;
+  assert.match(resolveSevenZip(exists), /7-Zip[\\/]7z.exe$/);
+});
+
+async function fixture(t, { notes = true, compressionFails = false, missingDrive = false, installFails = false } = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "ue-deploy-test-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const logs = path.join(root, "logs");
@@ -28,6 +36,7 @@ async function fixture(t, { notes = true, compressionFails = false, missingDrive
     getFormat: async () => "zip",
     getInstallConfig: async () => ({ Paths: { LogDirectory: logs, OutputDirectory: output } }),
     appendMonitorLog: async () => {}, machineUser: "test", getOutputBytes: () => 0,
+    ensureCompressor: async () => { if (installFails) throw new Error("7-Zip installation failed"); return "7z"; },
     spawnProcess(command, args) {
       calls.push({ command, args });
       const child = new EventEmitter();
@@ -68,6 +77,16 @@ test("compression failure is recorded and saves no files to Drive", async (t) =>
   assert.equal(f.state.deployHistory[0].ok, false);
   assert.deepEqual(await fs.readdir(f.drive), []);
   assert.equal(f.calls.length, 1);
+});
+
+test("installer failure releases deployment lock and does not create staging", async (t) => {
+  const f = await fixture(t, { installFails: true });
+  const result = await f.manager.startDeploy({ targetId: "gdrive" });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /installation failed/);
+  assert.equal(f.manager.getActive(), null);
+  assert.equal(f.calls.length, 0);
+  assert.equal((await fs.readdir(f.logs)).some((name) => name.startsWith("gdrive-")), false);
 });
 
 test("unmounted or missing Drive folder fails before compression", async (t) => {

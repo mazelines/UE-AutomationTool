@@ -2,6 +2,8 @@ import fs from "node:fs/promises";
 import fssync from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { ensureSevenZip } from "./seven-zip.js";
+export { resolveSevenZip } from "./seven-zip.js";
 
 // Artifacts come from _postbuild.bat's build_summary_<ts>.txt files; only the
 // newest successful build physically exists (the output directory is reused).
@@ -14,9 +16,7 @@ function parseSummary(text) {
   return record;
 }
 
-const sevenZip = fssync.existsSync("C:\\Program Files\\7-Zip\\7z.exe") ? "C:\\Program Files\\7-Zip\\7z.exe" : "7z";
-
-export function createDeployManager({ repoRoot, monitorLogRoot, store, getTargets, getAutoDeploy, getFormat, getInstallConfig, appendMonitorLog, machineUser, getOutputBytes, spawnProcess = spawn }) {
+export function createDeployManager({ repoRoot, monitorLogRoot, store, getTargets, getAutoDeploy, getFormat, getInstallConfig, appendMonitorLog, machineUser, getOutputBytes, spawnProcess = spawn, ensureCompressor = ensureSevenZip }) {
   let activeDeploy = null;
 
   const resolveDir = (value, fallback) => {
@@ -91,6 +91,8 @@ export function createDeployManager({ repoRoot, monitorLogRoot, store, getTarget
     if (!current) return { ok: false, error: "배포 가능한 CURRENT 아티팩트가 없습니다." };
     if (isDrive && !fssync.existsSync(current.releaseNotesPath)) return { ok: false, error: "릴리스 노트가 아직 없거나 생성 중입니다. releasseNote 파일 생성 후 다시 배포하세요." };
 
+    const compressor = await ensureCompressor();
+
     await fs.mkdir(monitorLogRoot, { recursive: true });
     const format = (await getFormat()) === "zip" ? "zip" : "7z";
     const stagingDir = isDrive ? await fs.mkdtemp(path.join(monitorLogRoot, "gdrive-")) : target.path;
@@ -115,7 +117,7 @@ export function createDeployManager({ repoRoot, monitorLogRoot, store, getTarget
     }
     const logPath = path.join(monitorLogRoot, `deploy-${new Date().toISOString().replace(/[:.]/g, "-")}.log`);
     const args = ["a", `-t${format}`, "-mx=5", "-mmt=on", "-y", "-bsp0", partialPath, path.join(current.path, "*")];
-    const child = spawnProcess(sevenZip, args, { windowsHide: true });
+    const child = spawnProcess(compressor, args, { windowsHide: true });
     const startedAt = new Date().toISOString();
     activeDeploy = { phase: "compressing", pid: child.pid, artifactId: current.id, targetId, targetName: target.name || target.path, startedAt, logPath, auto };
     const appendDeployLog = (data) => fs.appendFile(logPath, data.toString(), "utf8").catch(() => {});
@@ -123,7 +125,11 @@ export function createDeployManager({ repoRoot, monitorLogRoot, store, getTarget
     child.stderr?.on("data", appendDeployLog);
 
     let spawnError = null;
-    child.on("error", (error) => { spawnError = error; appendDeployLog(error.message); });
+    child.on("error", (error) => {
+      if (error.code === "ENOENT") error.message = "7-Zip을 찾을 수 없습니다. winget install --id 7zip.7zip --exact 명령으로 설치한 뒤 배포를 다시 실행하세요.";
+      spawnError = error;
+      appendDeployLog(error.message);
+    });
     child.on("close", async (code) => {
       let ok = code === 0;
       let failure = spawnError?.message || null;

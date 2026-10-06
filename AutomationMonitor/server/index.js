@@ -14,6 +14,7 @@ import { createRepoRegistry } from "./repos.js";
 import { diagnoseRun } from "./ai/index.js";
 import { createFixManager } from "./ai/fix.js";
 import { ensureDebuggingTools } from "./debugging-tools.js";
+import { ensureSevenZip } from "./seven-zip.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(__dirname, "..");
@@ -1111,6 +1112,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 await ensureDebuggingTools();
+await ensureSevenZip().catch((error) => console.error(`[7-Zip] ${error.message} Server will continue; deployment will retry installation.`));
 
 server.listen(port, host, () => {
   console.log(`UE6 automation monitor server listening on http://${host}:${port}`);

@@ -105,13 +105,21 @@ Clean/NoClean 실행, 일일 스케줄 시각, upstream/deps/project files/DDC �
 
 작업 이력은 `monitor-state.json`의 `aiFixHistory`, 실행 로그는 `LocalBuilds/AutomationMonitor/ai-fix-<작업 ID>.log`에 저장됩니다. 서버 재시작 후 자동 재개하지 않으며 이전 프로세스가 살아 있으면 새 해결 작업을 시작하지 않습니다.
 
+### Google Drive 배포가 `spawn 7z ENOENT`로 실패하는 경우
+
+7-Zip 실행 파일을 찾지 못해 압축 단계에서 실패한 것입니다. 서버 시작 시와 배포 시작 전에 7-Zip 설치 여부를 확인하며, 없으면 winget으로 자동 설치합니다. 기존 설치 경로와 PATH의 `7z`를 먼저 확인합니다. 설치에는 인터넷 연결과 관리자 권한이 필요할 수 있으며, winget 패키지·원본 약관에 자동 동의합니다. 설치 대기는 최대 10분이고 완료 후 실행 파일 동작을 검증합니다.
+
+서버 시작 시 설치가 실패해도 서버는 계속 실행하며, 배포 시 다시 설치를 시도합니다. 배포 시 설치 실패는 오류로 반환하고 압축을 시작하지 않습니다. 수동 설치가 필요하면 관리자 터미널에서 `winget install --id 7zip.7zip --exact`를 실행하세요. 이후 Distribution Targets에서 Google Drive 배포를 다시 실행합니다. 자동 배포는 빌드당 한 번만 시도하므로 실패한 빌드는 수동 재시도가 필요합니다.
+
+배포할 때마다 7-Zip 설치 경로를 다시 확인하므로 서버 실행 중 설치해도 감지합니다. 이 수정 이전 버전의 서버가 실행 중이면 업데이트 후 서버를 한 번 재시작하세요. 동기화 폴더 복사 완료 후 실제 클라우드 업로드 상태는 Google Drive 데스크톱 앱에서 확인합니다.
+
 ## 요구 사항
 
 - Windows 10/11
 - [Node.js](https://nodejs.org/) — 설치된 Vite 버전의 요구 사항 충족 필요 (현재 Vite 8: 20.19+ 또는 22.12+)
 - Git, PowerShell 5.1+
 - Windows SDK Debugging Tools — 서버 시작 시 x64 도구를 확인하고, 없으면 winget으로 자동 설치합니다. 최초 설치에는 인터넷 연결과 Windows 관리자 권한이 필요할 수 있습니다.
-- [7-Zip](https://www.7-zip.org/) — 배포 압축용. `C:\Program Files\7-Zip\7z.exe`를 먼저 찾고, 없으면 `PATH`의 `7z`를 사용합니다.
+- [7-Zip](https://www.7-zip.org/) — 배포 압축용. 서버 시작·배포 시 설치 경로와 PATH를 확인하고, 없으면 winget으로 자동 설치합니다.
 - 모니터링 대상: 로컬에 클론된 Unreal Engine 저장소 (`.git` 포함) — 저장소 선택기에서 등록
 - (선택) AI 진단 프로바이더: 로컬 Codex CLI 로그인 세션(`codex login`), 또는 OpenAI 호환 API 키 — 없으면 AI 진단만 비활성
 - (선택) Google Drive 배포: 로그인한 Google Drive 데스크톱 앱과 접근 가능한 동기화 폴더
@@ -355,11 +363,11 @@ Error while trying to create file pattern match for '...': Source file '...' doe
 `AutomationMonitor` 디렉터리에서 실행합니다.
 
 ```powershell
-node --test server/ai/fix.test.js server/deploy.test.js server/pipeline.test.js server/debugging-tools.test.js
+node --test server/ai/fix.test.js server/deploy.test.js server/pipeline.test.js server/debugging-tools.test.js server/seven-zip.test.js
 npm.cmd run build
 ```
 
-테스트는 실제 Google Drive 업로드·AI 수정·SDK 설치를 실행하지 않고 작업 흐름·실패 처리·중복 실행 방지와 Debugging Tools 설치 분기를 검증합니다.
+테스트는 실제 Google Drive 업로드·AI 수정·SDK 및 7-Zip 설치를 실행하지 않고 작업 흐름·실패 처리·중복 실행 방지와 도구 설치 분기를 검증합니다.
 
 ## 라이선스
 
