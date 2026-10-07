@@ -284,10 +284,10 @@ export default function OverviewView({ status, isRunning, busy, actions, setView
             <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", border: "1px solid var(--border)", borderRadius: 10, background: "var(--surface-2)" }}>
               <IconClock stroke={task?.exists ? "var(--success)" : "var(--text-mute)"} />
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13, fontWeight: 600 }}>Nightly · 02:00</div>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>Nightly · {task?.schedule || "미등록"}</div>
                 <div style={{ fontSize: 11.5, color: "var(--text-dim)" }}>UE6 Nightly Upstream Sync</div>
               </div>
-              <span className={`tag-pill ${task?.exists ? "success" : "mute"}`}>{task?.exists ? "ARMED" : "NONE"}</span>
+              <span className={`tag-pill ${task?.exists && task.state !== "Disabled" ? "success" : "mute"}`}>{!task?.exists ? "NONE" : task.state === "Disabled" ? "DISABLED" : "ARMED"}</span>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 13, fontSize: 12 }}>
               <div>

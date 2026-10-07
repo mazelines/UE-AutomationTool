@@ -428,7 +428,10 @@ async function getTaskSummaryUncached() {
     `$task = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue; ` +
     `if ($null -eq $task) { @{ exists = $false } | ConvertTo-Json -Compress; exit 0 }; ` +
     `$info = Get-ScheduledTaskInfo -TaskName $name; ` +
-    `@{ exists = $true; state = $task.State.ToString(); lastRunTime = $info.LastRunTime; nextRunTime = $info.NextRunTime; lastTaskResult = $info.LastTaskResult } | ConvertTo-Json -Compress`;
+    `$last = if ($info.LastTaskResult -eq 267011 -or $info.LastRunTime.Year -lt 2000) { $null } else { $info.LastRunTime.ToString('o') }; ` +
+    `$next = if ($info.NextRunTime.Year -lt 2000) { $null } else { $info.NextRunTime.ToString('o') }; ` +
+    `$schedule = if ($task.Triggers.Count -gt 0) { ([datetime]$task.Triggers[0].StartBoundary).ToString('HH:mm') } else { $null }; ` +
+    `@{ exists = $true; name = $name; schedule = $schedule; state = $task.State.ToString(); lastRunTime = $last; nextRunTime = $next; lastTaskResult = $info.LastTaskResult } | ConvertTo-Json -Compress`;
   const result = await runPowerShell(["-Command", script]);
   try {
     return JSON.parse(result.stdout || "{}");
@@ -793,6 +796,8 @@ async function startRun(input) {
 }
 async function registerTask(input) {
   if (!repoRoot) return { ok: false, error: "저장소를 먼저 선택하세요." };
+  if (input.taskName && input.taskName !== taskName) return { ok: false, error: "모니터는 기본 Nightly 작업 이름만 지원합니다." };
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(input.at || "02:00")) return { ok: false, error: "예약 시간은 HH:mm 형식이어야 합니다 (예: 16:00)." };
   const args = [
     "-File", path.join(automationRoot, "Register-NightlyInstalledBuildTask.ps1"),
     "-RepoRoot", repoRoot,
@@ -811,12 +816,16 @@ async function registerTask(input) {
   if (input.noDdc) args.push("-NoDDC");
 
   const result = await runPowerShell(args);
-  return { ok: result.code === 0, ...result };
+  ttlCache.delete("taskSummary");
+  if (result.code !== 0) return { ok: false, ...result, error: result.stderr || result.stdout || "예약 작업 등록 실패" };
+  const task = await getTaskSummary();
+  return { ok: task.exists, ...result, task, message: `Nightly 예약 작업 등록 완료 · 매일 ${input.at || "02:00"}`, ...(!task.exists ? { error: "등록 후 예약 작업을 확인하지 못했습니다." } : {}) };
 }
 
 async function startScheduledTask() {
   const result = await runPowerShell(["-Command", `Start-ScheduledTask -TaskName '${taskName.replaceAll("'", "''")}'`]);
-  return { ok: result.code === 0, ...result };
+  ttlCache.delete("taskSummary");
+  return { ok: result.code === 0, ...result, ...(result.code !== 0 ? { error: result.stderr || "예약 작업 실행 실패" } : {}) };
 }
 
 // ponytail: SIGTERM only kills powershell.exe; RunUAT->dotnet->UBT survive as orphans and trip the build guard. taskkill /T kills the whole tree.

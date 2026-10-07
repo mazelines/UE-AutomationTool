@@ -197,7 +197,7 @@ export default function App() {
     setBusy(true);
     try {
       const result = await action();
-      if (result?.error) flash("error", result.error);
+      if (result?.error || result?.ok === false) flash("error", result.error || result.stderr || `${label} 실패`);
       else flash(kind, result?.message || `${label} 완료`);
       await refresh();
       return result;
