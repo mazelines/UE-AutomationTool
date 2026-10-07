@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { formatClock, formatDate, parseDate, timeAgo } from "../api.js";
-import { Card, EmptyState, RunButtons } from "../components.jsx";
+import { Card, EmptyState, Field, RunButtons } from "../components.jsx";
 import { IconClock, IconSpark } from "../icons.jsx";
 import AIFixAction from "../AIFixAction.jsx";
 import { formatDur, runDotClass, summarizeRuns } from "../pipeline.js";
@@ -41,7 +41,7 @@ function StageRow({ stage, buildProgress }) {
   );
 }
 
-export default function OverviewView({ status, isRunning, busy, actions, setView, flash }) {
+export default function OverviewView({ status, options, setOptions, isRunning, busy, actions, setView, flash }) {
   const branch = status?.git?.branch || "-";
   const task = status?.task;
   const pipeline = status?.pipeline;
@@ -298,6 +298,11 @@ export default function OverviewView({ status, isRunning, busy, actions, setView
                 <div style={{ color: "var(--text-mute)", marginBottom: 3 }}>Next run</div>
                 <div style={{ fontWeight: 600 }}>{formatDate(task?.nextRunTime)}</div>
               </div>
+            </div>
+            <div style={{ marginTop: 15 }}>
+              <Field label="Daily Schedule" hint="시간 변경 후 Register Task로 적용하세요">
+                <input type="time" value={options.at} onChange={(event) => setOptions((current) => ({ ...current, at: event.target.value }))} />
+              </Field>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 15 }}>
               <button className="btn" style={{ height: 36, fontSize: 12.5 }} disabled={busy} onClick={actions.register}>Register Task</button>

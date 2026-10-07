@@ -155,9 +155,6 @@ export default function RunPipelineView({ status, installConfig, setInstallConfi
                   onChange={(event) => patchOptions({ builtDirectory: event.target.value })}
                 />
               </Field>
-              <Field label="Daily Schedule" hint="시간 변경 후 Overview의 Register Task로 예약 작업에 적용하세요">
-                <input type="time" value={options.at} onChange={(event) => patchOptions({ at: event.target.value })} />
-              </Field>
             </div>
             <div className="section-label" style={{ margin: "16px 0 12px" }}>Sync flags</div>
             <div className="tile-grid-2">
