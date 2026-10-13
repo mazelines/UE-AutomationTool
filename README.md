@@ -1,7 +1,7 @@
 # AutomationMonitor
 
 Unreal Engine 소스 저장소의 **nightly upstream sync**와 **installed-engine build**를 모니터링·실행·배포하는 웹 대시보드입니다.  
-`Automation/SyncAndBuildInstalled.ps1` 파이프라인을 감시하고, Windows 작업 스케줄러 등록, 로그 열람, 디스크·upstream 상태 알림, SMB·Google Drive 배포, 릴리스 노트 생성, AI 진단과 직접 해결을 한 화면에서 처리합니다.
+`Automation/SyncAndBuildInstalled.ps1` 파이프라인을 감시하고, Windows 작업 스케줄러 등록, 로그 열람, 디스크·upstream 상태 알림, SMB·Google Drive 배포, 릴리스 노트 생성, AI 진단을 한 화면에서 처리합니다.
 
 이 도구는 자신만의 디렉터리에서 독립적으로 실행되며, 빌드·배포 대상이 되는 언리얼 엔진 클론과는 별도로 존재합니다. 대시보드 상단의 저장소 선택기에서 로컬에 클론된 UE 저장소를 등록·전환하며, 각 저장소는 자신만의 빌드 설정·배포 타깃·알림 설정을 독립적으로 가집니다. 자세한 내용은 [저장소 선택](#저장소-선택)을 참고하세요.
 
@@ -13,7 +13,7 @@ Unreal Engine 소스 저장소의 **nightly upstream sync**와 **installed-engin
 | Run & Pipeline | Run 옵션, 설치 빌드 설정 편집, 즉시 실행·스케줄 등록 |
 | Deploy | installed-engine 아티팩트 목록, SMB·Google Drive 동기화 폴더 배포, 자동 배포, 릴리스 노트, 배포 이력 |
 | Logs | 빌드·모니터 로그 tail, 필터, 다운로드 |
-| AI Diagnostics | 파이프라인 실패 AI 진단 (Codex CLI·OpenAI 호환 API), 자동/수동 실행, 진행 상태·결과, 직접 해결·실행 로그 |
+| AI Diagnostics | 파이프라인 실패 AI 진단 (Codex CLI·OpenAI 호환 API), 자동/수동 실행, 진행 상태·결과 |
 | Alerts | 인시던트 피드, 알림 채널 설정, 트리거 규칙 |
 
 ## 스크린샷
@@ -88,26 +88,20 @@ API 응답 대기는 최대 3분이며 응답 토큰 상한은 8,192입니다. Z
 - **토큰 예산**: `maxTokens`(기본 120,000)에 맞춰 긴 로그는 앞부분(맥락)과 뒷부분(에러)을 남기고 중간을 잘라 보냅니다.
 - **API 키 보호**: 저장된 키는 조회 시 `[REDACTED]`로 마스킹되며, 재저장해도 기존 키가 유지됩니다. 진단 결과는 `workspace.json`의 `ai.diagnostics`에 run 로그 이름별로 저장됩니다.
 
-### 직접 해결
+### Pi 에이전트
 
-1. **AI Diagnostics → 최근 실패 실행 · AI 진단 결과**에서 진단 완료를 확인합니다. 자동 진단을 사용하지 않으면 **최근 실패 로그 수동 진단**을 먼저 실행합니다.
-2. 해당 결과의 **직접 해결**을 누릅니다. Overview의 AI 진단 카드에서도 같은 버튼을 사용할 수 있습니다.
-3. **실행 로그**에서 진행 상황을 확인하고, 완료 후 수정 파일·검증 결과·다음 조치를 검토합니다.
-4. 해결 완료 후 빌드를 다시 실행하여 전체 파이프라인 성공 여부를 확인합니다.
+AI Diagnostics 오른쪽의 Pi 패널에서 빌드 로그를 두 역할의 에이전트와 함께 검토합니다. `@earendil-works/pi-coding-agent` SDK가 프로젝트에 포함되므로 전역 Pi CLI 설치는 필요하지 않습니다.
 
-진단이 성공한 실패 실행에만 직접 해결 버튼을 제공합니다. 진단 프로바이더가 Z.AI여도 실제 수정은 로컬 Codex CLI가 수행하므로 Codex 로그인과 `codex.exe`가 필요합니다. 실행 파일을 자동으로 찾지 못하면 AI 설정의 CLI 경로에 지정하세요. 서버 PC에서 `http://127.0.0.1:4174` 또는 개발 UI `http://127.0.0.1:5173`로 접속해야 실행할 수 있습니다.
+- **Z.ai · CI/CD 담당**: 선택한 실행의 로그·진단 결과와 파이프라인을 분석합니다.
+- **Codex · 개발 총괄**: Z.ai의 보고를 받아 수정 방향과 실제 검증 결과를 검토합니다.
 
-| 상태 | 의미 |
-|------|------|
-| AI가 직접 해결 중 | 진단·로그를 확인하고 로컬 파일·설정 수정 및 검증을 수행 중 |
-| 해결 완료 | AI가 수정 내용과 원래 실패 원인에 대한 검증 결과를 보고함 |
-| 사용자 조치 필요 | 인증·접근 권한 등 직접 처리해야 할 조치가 남음 |
-| 해결 실패 | 실행 오류 또는 해결·검증 실패. 실행 로그 확인 필요 |
-| 작업 추적 중단 | 서버 재시작으로 추적이 중단됨. 로그와 변경 파일 확인 필요 |
+AI 설정의 Z.ai 활성화 상태·API 키·모델·Base URL을 사용합니다. Codex는 서버 계정의 `CODEX_HOME/auth.json` 또는 `~/.codex/auth.json`에서 유효한 ChatGPT 로그인 토큰을 읽습니다. 토큰을 별도로 저장하거나 갱신하지 않으며 만료되면 `codex login` 후 새 대화를 시작하세요. Codex 모델은 AI 설정을 사용하고, 비어 있으면 `gpt-6.1-sol`을 사용합니다.
 
-수정 실행은 `workspace-write`로 대상 UE 저장소와 자동화 도구 경로에 쓰기 권한을 부여하고 Fetch 검증 등을 위한 네트워크 접근을 허용합니다. 기존 변경을 보존하며 전체 엔진 재빌드·커밋·푸시·배포는 수행하지 않도록 지시합니다. 작업 제한은 20분입니다. 빌드·배포 중에는 시작할 수 없고, 해결 작업 중에는 모니터의 빌드 실행·저장소 전환·배포가 차단됩니다. Windows 작업 스케줄러가 외부에서 시작하는 빌드와 겹치지 않도록 운영해야 합니다.
+대상 실행을 선택하고 메시지를 보내면 Z.ai 분석 후 Codex 검토가 순서대로 진행됩니다. 기본 도구는 `read`, `grep`, `find`, `ls`입니다. **로컬 파일 수정·명령 실행 허용**을 켜고 시작한 대화에서는 `edit`, `write`, PowerShell 도구도 활성화됩니다. 커밋·푸시·배포·전체 빌드·자격 증명 변경을 하지 않도록 에이전트에 지시합니다. 명령 도구 자체는 운영체제 샌드박스가 아니므로 실행 결과를 검토하세요.
 
-작업 이력은 `monitor-state.json`의 `aiFixHistory`, 실행 로그는 `LocalBuilds/AutomationMonitor/ai-fix-<작업 ID>.log`에 저장됩니다. 서버 재시작 후 자동 재개하지 않으며 이전 프로세스가 살아 있으면 새 해결 작업을 시작하지 않습니다.
+대화와 도구 결과를 확인하고 **중지**로 작업을 취소할 수 있습니다. 대상 또는 수정 권한을 바꾸려면 **새 대화**를 시작하세요. 대화는 서버 메모리에 유지되며 서버 재시작 시 초기화됩니다. 요청당 최대 실행 시간은 20분이며, 응답 완료는 전체 빌드 성공을 뜻하지 않습니다.
+
+Pi API는 서버 PC의 로컬 요청만 허용합니다. 빌드·배포·Fetch 진행 중에는 시작할 수 없고 Pi 실행 중에는 모니터의 빌드·배포·저장소 전환을 차단합니다. Windows 작업 스케줄러가 외부에서 시작하는 빌드는 이 차단 범위 밖입니다. Pi SDK는 MIT 라이선스이며 [라이선스 고지](LICENSES/Pi-MIT.txt)를 포함합니다. 모델 이용 비용은 각 제공자의 요금 정책을 따릅니다.
 
 ### Google Drive 배포가 `spawn 7z ENOENT`로 실패하는 경우
 
@@ -137,7 +131,6 @@ Upstream ahead는 저장소 활성화 시와 이후 **5분마다 자동 Fetch**�
 - 모니터링 대상: 로컬에 클론된 Unreal Engine 저장소 (`.git` 포함) — 저장소 선택기에서 등록
 - (선택) AI 진단 프로바이더: 로컬 Codex CLI 로그인 세션(`codex login`), 또는 OpenAI 호환 API 키 — 없으면 AI 진단만 비활성
 - (선택) Google Drive 배포: 로그인한 Google Drive 데스크톱 앱과 접근 가능한 동기화 폴더
-- (선택) AI 직접 해결: 로컬 Codex CLI의 `codex.exe`와 로그인 세션
 - 빌드 로그: `<선택한 저장소>/LocalBuilds/AutomationLogs/`
 - 모니터 로그·상태·설정: `<선택한 저장소>/LocalBuilds/AutomationMonitor/`
 
@@ -145,7 +138,7 @@ Upstream ahead는 저장소 활성화 시와 이후 **5분마다 자동 Fetch**�
 
 ### 원클릭 실행 (권장)
 
-API 서버는 **Windows 관리자 권한으로만 실행**됩니다. `Start-Dev.cmd`·`Start-Prod.cmd` 및 PowerShell 실행 파일은 일반 권한이면 UAC 승인을 요청하여 관리자 권한으로 다시 시작합니다. UAC를 취소하면 실행하지 않습니다. `Start-Server.bat`는 우클릭 → **관리자 권한으로 실행**을 선택하세요. `node server/index.js`·npm 명령으로 직접 실행할 때도 관리자 터미널이 필요하며, 일반 권한이면 서버가 오류 안내 후 종료합니다. 관리자 권한은 작업 스케줄러 등록과 필수 도구 설치에 사용됩니다.
+API 서버는 **Windows 관리자 권한으로만 실행**됩니다. `Start-Dev.cmd`·`Start-Prod.cmd`·`Start-Server.bat` 및 PowerShell 실행 파일은 일반 권한이면 UAC 승인을 요청하여 관리자 권한으로 다시 시작합니다. `Stop.cmd`도 관리자 권한을 요청하여 서버를 종료합니다. UAC를 취소하면 실행하지 않습니다. `Start-Server.bat`는 승격 시 UI 빌드 생략·브라우저 생략 옵션과 포트 번호를 유지합니다. `node server/index.js`·npm 명령으로 직접 실행할 때도 관리자 터미널이 필요하며, 일반 권한이면 서버가 오류 안내 후 종료합니다. 관리자 권한은 작업 스케줄러 등록과 필수 도구 설치에 사용됩니다.
 
 상시 실행 작업을 등록하는 `Register-MonitorServerTask.ps1`도 관리자 PowerShell에서 실행해야 합니다. 등록되는 서버 작업은 `Highest` 권한으로 실행합니다. 이전에 등록한 서버 작업은 스크립트를 다시 실행하여 갱신하세요.
 
@@ -290,12 +283,13 @@ AutomationMonitor/
 | POST | `/api/upstream/register` | upstream remote 추가 및 fetch |
 | GET | `/api/logs/:name` | 로그 tail |
 | GET/POST | `/api/ai/config` | AI 프로바이더·자동 진단 설정 (조회 시 API 키는 `[REDACTED]` 마스킹) |
+| GET | `/api/pi` | Pi 대화·도구 결과·진행 상태 (서버 PC의 로컬 요청만 허용) |
+| POST | `/api/pi/message` | 역할별 에이전트에 요청 (`{ message, logName?, allowChanges? }`) |
+| POST | `/api/pi/stop` | Pi 실행 중지 |
+| POST | `/api/pi/reset` | 새 대화 |
 | POST | `/api/ai/test` | 프로바이더 연결 테스트 (`{ providerId, config? }`) |
 | POST | `/api/ai/models` | 프로바이더 모델 목록 조회 (`{ providerId, config? }`) |
 | POST | `/api/ai/diagnose` | 빌드 진단 실행 (`{ logName }`, 생략 시 최근 실패 run) |
-| GET | `/api/ai/fix` | 직접 해결 작업 상태·이력 조회 (서버 PC의 로컬 요청만 허용) |
-| POST | `/api/ai/fix` | 직접 해결 시작 (`{ logName }`, 완료된 진단 필요) |
-| GET | `/api/ai/fix/log?id=<작업 ID>` | 직접 해결 실행 로그 조회 |
 | GET | `/api/deploy` | 아티팩트·타깃·자동 배포 설정·압축 형식·이력 |
 | POST | `/api/deploy/start` | SMB 또는 Google Drive 동기화 폴더 배포 시작 (`{ targetId }`) |
 | POST | `/api/deploy/targets` | 타깃 이름·경로 저장 (타깃 객체 배열) |
@@ -315,7 +309,6 @@ AutomationMonitor/
 - **Deploy**: SMB는 `.partial` 파일 압축 완료 후 `Engine.<format>`으로 교체합니다. Google Drive는 로컬 압축 후 동기화 폴더에 날짜·시간별 압축 파일과 릴리스 노트를 복사하고, 앱이 클라우드 동기화를 수행합니다.
 - **자동 배포**: 켠 시점의 CURRENT 아티팩트를 기준선으로 잡아 과거 빌드를 다시 배포하지 않습니다. 빌드당 한 번만 시도하며, 실패하면 재시도 없이 모니터 로그에 남깁니다.
 - **AI 진단**: 자동·수동 진단 결과와 진행 상태는 AI Diagnostics 및 Overview에 표시합니다. 모니터에서 실행한 파이프라인은 프로세스 종료 직후 진단 확인을 시작합니다.
-- **직접 해결**: 완료된 진단의 버튼으로 수정 작업을 시작합니다. 작업 결과와 실행 로그를 확인한 뒤 빌드를 다시 실행합니다.
 - **테마**: 사이드바 하단·상단의 라이트/다크 토글. `localStorage`에 저장.
 
 ## 트러블슈팅
@@ -350,9 +343,6 @@ AI Diagnostics에서 **빌드 실패 시 자동으로 AI 진단 실행**을 켜�
 
 Drive 앱의 로그인·실행 상태, 지정 폴더 존재 여부, 서버 계정에서의 경로 접근 및 디스크 여유 공간을 확인하세요. 릴리스 노트가 없다는 오류라면 해당 빌드의 `releasseNote_*.md`(기존 빌드는 `.txt`)가 생성됐는지 확인합니다. Saved인데 웹 Drive에 파일이 보이지 않으면 앱의 동기화 대기·오류 상태를 확인해야 합니다.
 
-### 직접 해결 버튼이 동작하지 않을 때
-
-서버 PC에서 로컬 URL로 접속하고, Codex 로그인과 `codex.exe` 경로를 확인하세요. 빌드·배포 또는 다른 해결 작업이 실행 중이면 끝난 뒤 다시 시도합니다. **사용자 조치 필요**이면 결과의 다음 조치를 수행하세요. 해결 완료는 해당 실패 원인의 검증 결과이므로 전체 엔진 빌드 성공은 재실행으로 확인해야 합니다.
 
 ### 빌드는 SUCCESS인데 출력물이 비정상적으로 작을 때 (Templates/FeaturePacks 누락)
 
@@ -381,7 +371,7 @@ Error while trying to create file pattern match for '...': Source file '...' doe
 `AutomationMonitor` 디렉터리에서 실행합니다.
 
 ```powershell
-node --test server/*.test.js server/ai/fix.test.js
+node --test server/*.test.js
 npm.cmd run build
 ```
 

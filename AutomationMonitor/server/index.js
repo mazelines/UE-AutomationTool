@@ -1,4 +1,5 @@
 import http from "node:http";
+import { createPiManager } from "./ai/pi.js";
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import fssync from "node:fs";
@@ -12,7 +13,6 @@ import { createDeployManager } from "./deploy.js";
 import { createWorkspace, DEFAULT_RUN_OPTIONS, DEFAULT_BUILD_CONFIG, DEFAULT_AI_PROVIDERS, DEFAULT_AI_CONFIG } from "./workspace.js";
 import { createRepoRegistry } from "./repos.js";
 import { diagnoseRun } from "./ai/index.js";
-import { createFixManager } from "./ai/fix.js";
 import { ensureDebuggingTools } from "./debugging-tools.js";
 import { ensureSevenZip } from "./seven-zip.js";
 import { requireAdministrator } from "./administrator.js";
@@ -44,7 +44,6 @@ let installConfigPath = null;
 let workspace = null;
 let stateStore = null;
 let deployManager = null;
-let fixManager = null;
 
 let activeRun = null;
 // Timestamp of the last user-requested Stop Run. Lets pipeline status flip the
@@ -53,6 +52,20 @@ let activeRun = null;
 let lastStopRequestAt = null;
 // Cache for the latest pipeline status so AI auto-diagnosis can react to failures.
 let lastPipelineStatus = { pipeline: null, runs: [] };
+
+const piManager = createPiManager({
+  getContext: async (logName) => {
+    if (!repoRoot) return null;
+    await getStatus();
+    const run = logName ? lastPipelineStatus.runs.find((item) => item.logName === logName) : lastPipelineStatus.runs[0];
+    if (logName && !run) throw new Error("선택한 실행 기록을 찾을 수 없습니다.");
+    const config = await getAiConfig();
+    const evidence = run ? JSON.stringify({ run, diagnosis: config.diagnostics?.[run.logName],
+      wrapperLog: await tailFile(run.logName, 180), buildLog: run.buildLogName ? await tailFile(run.buildLogName, 180) : "" }) : "실행 기록 없음";
+    return { repoRoot, config, logName: run?.logName || null, evidence: evidence.slice(-60000) };
+  },
+  isBusy: async () => Boolean(activeRun || deployManager?.getActive() || upstreamFetcher.isActive() || (await getTaskSummary()).state === "Running")
+});
 
 const pkg = JSON.parse(fssync.readFileSync(path.join(appRoot, "package.json"), "utf8"));
 const machineInfo = {
@@ -344,7 +357,7 @@ setInterval(refreshOutputSize, 30 * 60 * 1000);
 
 // Auto-deploy watcher — a new successful build_summary appears once per finished build,
 // regardless of whether the run came from the monitor or the scheduled task.
-setInterval(() => { if (!fixManager?.getActive()) deployManager?.checkAutoDeploy().catch(() => {}); }, 60 * 1000);
+setInterval(() => { if (piManager.isActive()) return; deployManager?.checkAutoDeploy().catch(() => {}); }, 60 * 1000);
 
 const upstreamFetcher = createUpstreamFetcher({
   getContext: async () => {
@@ -355,7 +368,7 @@ const upstreamFetcher = createUpstreamFetcher({
     return { root, remote: cfg.UpstreamRemote || "upstream", branch: cfg.UpstreamBranch || "ue6-main",
       disabled: String(cfg.SkipUpstreamSync).toLowerCase() === "true" };
   },
-  isBusy: async () => Boolean(activeRun || fixManager?.getActive() || (await getTaskSummary()).state === "Running"),
+  isBusy: async () => Boolean(activeRun || piManager.isActive() || (await getTaskSummary()).state === "Running"),
   onUpdated: async ({ root }) => { if (repoRoot === root) ttlCache.delete("gitSummary"); },
   log: appendMonitorLog
 });
@@ -365,6 +378,7 @@ setInterval(() => upstreamFetcher.check().catch((error) => console.error(error))
 // workspace.json now live under that clone's own LocalBuilds/AutomationMonitor/ — each
 // registered repo keeps its own build config, run options, deploy targets and alert state.
 async function activateRepo(targetPath) {
+  await piManager.reset();
   repoRoot = targetPath;
   logRoot = path.join(repoRoot, "LocalBuilds", "AutomationLogs");
   monitorLogRoot = path.join(repoRoot, "LocalBuilds", "AutomationMonitor");
@@ -388,18 +402,6 @@ async function activateRepo(targetPath) {
     machineUser: machineInfo.user,
     getOutputBytes: () => outputSize.bytes
   });
-  fixManager = createFixManager({
-    repoRoot, toolRoot, monitorLogRoot, store: stateStore, getAiConfig, tailFile,
-    getRun: async (logName) => {
-      await getStatus();
-      return lastPipelineStatus.runs.find((run) => run.logName === logName);
-    },
-    isBusy: async () => Boolean(activeRun || upstreamFetcher.isActive() || deployManager.getActive() || (await getTaskSummary()).state === "Running"),
-    onFinished: async (job) => {
-      ttlCache.clear();
-      await appendMonitorLog(`AI fix ${job.id} finished: ${job.status}`);
-    }
-  });
   ttlCache.clear();
   outputSize = { bytes: null, updatedAt: null };
   refreshOutputSize();
@@ -407,6 +409,7 @@ async function activateRepo(targetPath) {
 }
 
 function deactivateRepo() {
+  void piManager.reset();
   repoRoot = null;
   logRoot = null;
   monitorLogRoot = null;
@@ -414,7 +417,6 @@ function deactivateRepo() {
   workspace = null;
   stateStore = null;
   deployManager = null;
-  fixManager = null;
   ttlCache.clear();
   outputSize = { bytes: null, updatedAt: null };
 }
@@ -725,7 +727,7 @@ async function getStatus() {
     alerts = { list, openCount: list.filter((a) => !a.acked).length, thresholds: ws.alerts?.thresholds };
   } catch {}
   return {
-    ai: { ...sanitizeAiConfig(ai), inProgress: [...autoDiagnoseInProgress], fixes: fixManager ? await fixManager.getState() : { active: null, history: [] } },
+    ai: { ...sanitizeAiConfig(ai), inProgress: [...autoDiagnoseInProgress] },
     alerts,
     runOptions,
     repos: await repoRegistry.load(),
@@ -747,7 +749,6 @@ async function getStatus() {
 }
 
 async function startRun(input) {
-  if (fixManager?.getActive()) return { ok: false, error: "AI 해결 작업이 끝난 후 빌드를 실행하세요." };
   if (!repoRoot) return { ok: false, error: "저장소를 먼저 선택하세요." };
   if (activeRun) {
     return { ok: false, error: `Automation is already running as PID ${activeRun.pid}.` };
@@ -927,23 +928,22 @@ async function serveStatic(req, res) {
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
-    if (url.pathname.startsWith("/api/ai/fix")) {
+    if (url.pathname.startsWith("/api/pi")) {
       const local = ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(req.socket.remoteAddress);
       const localHost = ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname);
       const sameOrigin = !req.headers.origin || req.headers.origin === `http://${req.headers.host}` || (isDev && ["http://127.0.0.1:5173", "http://localhost:5173"].includes(req.headers.origin));
-      if (!local || !localHost || !sameOrigin) return sendJson(res, 403, { ok: false, error: "AI 직접 해결은 이 PC의 모니터에서만 실행할 수 있습니다." });
-      if (!fixManager) return sendJson(res, 400, { ok: false, error: "저장소를 먼저 선택하세요." });
-      if (url.pathname === "/api/ai/fix" && req.method === "GET") return sendJson(res, 200, await fixManager.getState());
-      if (url.pathname === "/api/ai/fix/log" && req.method === "GET") return sendJson(res, 200, { text: await fixManager.readLog(url.searchParams.get("id")) });
-      if (url.pathname === "/api/ai/fix" && req.method === "POST") {
+      if (!local || !localHost || !sameOrigin) return sendJson(res, 403, { ok: false, error: "Pi는 서버 PC의 로컬 화면에서만 사용할 수 있습니다." });
+      if (url.pathname === "/api/pi" && req.method === "GET") return sendJson(res, 200, piManager.getState());
+      if (req.method === "POST") {
         if (!req.headers["content-type"]?.startsWith("application/json")) return sendJson(res, 415, { ok: false, error: "JSON 요청이 필요합니다." });
-        const body = await readBody(req);
-        return sendJson(res, 200, await fixManager.start(body.logName));
+        if (url.pathname === "/api/pi/message") return sendJson(res, 200, await piManager.send(await readBody(req)));
+        if (url.pathname === "/api/pi/stop") return sendJson(res, 200, await piManager.stop());
+        if (url.pathname === "/api/pi/reset") return sendJson(res, 200, await piManager.reset());
       }
     }
-    if (req.method !== "GET" && fixManager?.getActive() && (
-      url.pathname.startsWith("/api/repos") || ["/api/start-task", "/api/register-task", "/api/install-config", "/api/upstream/register", "/api/deploy/start"].includes(url.pathname)
-    )) return sendJson(res, 200, { ok: false, error: "AI 해결 작업이 끝난 후 다시 시도하세요." });
+    if (req.method !== "GET" && piManager.isActive() && (
+      url.pathname.startsWith("/api/repos") || ["/api/run-now", "/api/start-task", "/api/register-task", "/api/install-config", "/api/upstream/register", "/api/deploy/start", "/api/ai/config"].includes(url.pathname)
+    )) return sendJson(res, 200, { ok: false, error: "Pi 작업이 끝난 후 다시 시도하세요." });
     if (req.method === "POST" && upstreamFetcher.isActive() && (
       url.pathname.startsWith("/api/repos") || ["/api/run-now", "/api/start-task", "/api/upstream/register", "/api/install-config"].includes(url.pathname)
     )) return sendJson(res, 200, { ok: false, error: "Upstream Fetch 진행 중입니다. 잠시 후 다시 시도하세요." });

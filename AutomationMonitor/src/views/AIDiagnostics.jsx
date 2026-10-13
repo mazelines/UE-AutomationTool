@@ -1,7 +1,7 @@
+import PiAgentPanel from "../PiAgentPanel.jsx";
 import React, { useEffect, useMemo, useState } from "react";
 import { api, formatDate } from "../api.js";
 import { IconSpark, IconCheck } from "../icons.jsx";
-import AIFixAction from "../AIFixAction.jsx";
 
 const DEFAULT_AI_CONFIG = {
   autoDiagnose: false,
@@ -169,7 +169,8 @@ export default function AIDiagnosticsView({ flash, status }) {
   if (!config) return <div className="loading" />;
 
   return (
-    <div style={{ padding: 16, maxWidth: 880 }}>
+    <div className="ai-workspace">
+    <div style={{ minWidth: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
         <IconSpark />
         <h1 style={{ fontSize: 18, margin: 0 }}>AI 빌드 진단</h1>
@@ -191,7 +192,6 @@ export default function AIDiagnosticsView({ flash, status }) {
                 {result.affectedFiles?.length > 0 && <div><b>파일:</b> {result.affectedFiles.join(", ")}</div>}
                 <div style={{ marginTop: 8 }}><b>권장 해결:</b> {result.recommendedFix}</div>
               </> : diagnosis && <div style={{ color: "var(--danger)" }}>{diagnosis.error}</div>}
-              {diagnosis?.ok && <AIFixAction run={run} status={status} flash={flash} />}
             </div>
           );
         })}
@@ -377,6 +377,8 @@ export default function AIDiagnosticsView({ flash, status }) {
           </div>
         </div>
       )}
+    </div>
+    <PiAgentPanel status={status} flash={flash} />
     </div>
   );
 }

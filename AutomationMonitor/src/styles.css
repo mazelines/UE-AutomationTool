@@ -538,3 +538,8 @@ input, select { font-family: inherit; }
 }
 .browse-entry:hover { background: var(--surface-2); color: var(--accent); }
 .modal-foot { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-top: 1px solid var(--border); }
+
+.ai-workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 440px); gap: 18px; padding: 16px; align-items: start; }
+.pi-panel { position: sticky; top: 16px; min-width: 0; }
+.pi-response { height: clamp(420px, 65vh, 1000px); min-height: 320px; overflow-y: auto; resize: vertical; margin-bottom: 12px; }
+@media (max-width: 1100px) { .ai-workspace { grid-template-columns: minmax(0, 1fr); } .pi-panel { position: static; } }

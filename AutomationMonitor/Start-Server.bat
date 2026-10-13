@@ -1,11 +1,5 @@
 @echo off
 setlocal EnableExtensions
-powershell.exe -NoProfile -Command "if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { exit 1 }"
-if errorlevel 1 (
-    echo [admin] Right-click Start-Server.bat and select Run as administrator.
-    pause
-    exit /b 1
-)
 REM AutomationMonitor - pure-batch server launcher (production mode).
 REM Builds the UI, frees the port, then runs the Node server that serves
 REM UI + API on one port (default http://127.0.0.1:4174).
@@ -24,6 +18,18 @@ if /i "%~1"=="--no-build" ( set "DO_BUILD=0" ) else if /i "%~1"=="--no-browser" 
 shift
 goto parse_args
 :args_done
+
+REM Elevate before installing, building, stopping listeners, or starting the server.
+set "UE_MONITOR_BATCH_PATH=%~f0"
+set "UE_MONITOR_BATCH_PORT=%PORT%"
+set "UE_MONITOR_BATCH_BUILD=%DO_BUILD%"
+set "UE_MONITOR_BATCH_BROWSER=%DO_BROWSER%"
+powershell.exe -NoProfile -Command "if ($env:UE_MONITOR_BATCH_PORT -notmatch '^\d{1,5}$' -or [int]$env:UE_MONITOR_BATCH_PORT -lt 1 -or [int]$env:UE_MONITOR_BATCH_PORT -gt 65535) { Write-Host '[error] Port must be between 1 and 65535.'; exit 2 }; if (([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { exit 0 }; Write-Host '[admin] Approve the Windows UAC prompt.'; $launchArgs = @($env:UE_MONITOR_BATCH_PORT); if ($env:UE_MONITOR_BATCH_BUILD -eq '0') { $launchArgs += '--no-build' }; if ($env:UE_MONITOR_BATCH_BROWSER -eq '0') { $launchArgs += '--no-browser' }; try { $child = Start-Process -FilePath $env:UE_MONITOR_BATCH_PATH -Verb RunAs -WindowStyle Hidden -ArgumentList $launchArgs -PassThru -Wait; if ($child.ExitCode -ne 0) { exit 2 }; exit 10 } catch { Write-Host '[error] Administrator launch failed or UAC was cancelled.'; exit 2 }"
+if errorlevel 10 exit /b 0
+if errorlevel 1 (
+    pause
+    exit /b 1
+)
 
 where node >nul 2>nul
 if errorlevel 1 (

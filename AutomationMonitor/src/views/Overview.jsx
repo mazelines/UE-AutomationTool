@@ -2,7 +2,6 @@ import React, { useEffect, useState } from "react";
 import { formatClock, formatDate, parseDate, timeAgo } from "../api.js";
 import { Card, EmptyState, Field, RunButtons } from "../components.jsx";
 import { IconClock, IconSpark } from "../icons.jsx";
-import AIFixAction from "../AIFixAction.jsx";
 import { formatDur, runDotClass, summarizeRuns } from "../pipeline.js";
 
 function useNow(active) {
@@ -41,7 +40,7 @@ function StageRow({ stage, buildProgress }) {
   );
 }
 
-export default function OverviewView({ status, options, setOptions, isRunning, busy, actions, setView, flash }) {
+export default function OverviewView({ status, options, setOptions, isRunning, busy, actions, setView }) {
   const branch = status?.git?.branch || "-";
   const task = status?.task;
   const pipeline = status?.pipeline;
@@ -245,7 +244,6 @@ export default function OverviewView({ status, options, setOptions, isRunning, b
                     <span>Provider: {diag.providerName || diag.providerId}</span>
                     <span>신뢰도: {diag.confidence}</span>
                   </div>
-                  <AIFixAction run={run} status={status} flash={flash} />
                 </div>
               </Card>
             );
