@@ -1,6 +1,7 @@
 import http from "node:http";
 import { createPiManager } from "./ai/pi.js";
 import { mergeProviderConfig } from "./ai/config.js";
+import { createArtifactNotesManager } from "./artifact-notes.js";
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import fssync from "node:fs";
@@ -65,7 +66,12 @@ const piManager = createPiManager({
       wrapperLog: await tailFile(run.logName, 180), buildLog: run.buildLogName ? await tailFile(run.buildLogName, 180) : "" }) : "실행 기록 없음";
     return { repoRoot, config, logName: run?.logName || null, evidence: evidence.slice(-60000) };
   },
-  isBusy: async () => Boolean(activeRun || deployManager?.getActive() || upstreamFetcher.isActive() || (await getTaskSummary()).state === "Running")
+  isBusy: async () => Boolean(activeRun || releaseNotesManager.isActive() || deployManager?.getActive() || upstreamFetcher.isActive() || (await getTaskSummary()).state === "Running")
+});
+
+const releaseNotesManager = createArtifactNotesManager({
+  getContext: async () => repoRoot ? { repoRoot, artifacts: await deployManager.listArtifacts() } : null,
+  isBusy: async () => Boolean(activeRun || piManager.isActive() || deployManager?.getActive() || upstreamFetcher.isActive() || (await getTaskSummary()).state === "Running")
 });
 
 const pkg = JSON.parse(fssync.readFileSync(path.join(appRoot, "package.json"), "utf8"));
@@ -359,7 +365,7 @@ setInterval(refreshOutputSize, 30 * 60 * 1000);
 
 // Auto-deploy watcher — a new successful build_summary appears once per finished build,
 // regardless of whether the run came from the monitor or the scheduled task.
-setInterval(() => { if (piManager.isActive()) return; deployManager?.checkAutoDeploy().catch(() => {}); }, 60 * 1000);
+setInterval(() => { if (piManager.isActive() || releaseNotesManager.isActive()) return; deployManager?.checkAutoDeploy().catch(() => {}); }, 60 * 1000);
 
 const upstreamFetcher = createUpstreamFetcher({
   getContext: async () => {
@@ -370,7 +376,7 @@ const upstreamFetcher = createUpstreamFetcher({
     return { root, remote: cfg.UpstreamRemote || "upstream", branch: cfg.UpstreamBranch || "ue6-main",
       disabled: String(cfg.SkipUpstreamSync).toLowerCase() === "true" };
   },
-  isBusy: async () => Boolean(activeRun || piManager.isActive() || (await getTaskSummary()).state === "Running"),
+  isBusy: async () => Boolean(activeRun || piManager.isActive() || releaseNotesManager.isActive() || (await getTaskSummary()).state === "Running"),
   onUpdated: async ({ root }) => { if (repoRoot === root) ttlCache.delete("gitSummary"); },
   log: appendMonitorLog
 });
@@ -945,11 +951,14 @@ const server = http.createServer(async (req, res) => {
       }
     }
     if (req.method !== "GET" && piManager.isActive() && (
-      url.pathname.startsWith("/api/repos") || ["/api/run-now", "/api/start-task", "/api/register-task", "/api/install-config", "/api/upstream/register", "/api/deploy/start", "/api/ai/config"].includes(url.pathname)
+      url.pathname.startsWith("/api/repos") || ["/api/run-now", "/api/start-task", "/api/register-task", "/api/install-config", "/api/upstream/register", "/api/deploy/start", "/api/deploy/release-notes", "/api/ai/config"].includes(url.pathname)
     )) return sendJson(res, 200, { ok: false, error: "Pi 작업이 끝난 후 다시 시도하세요." });
     if (req.method === "POST" && upstreamFetcher.isActive() && (
       url.pathname.startsWith("/api/repos") || ["/api/run-now", "/api/start-task", "/api/upstream/register", "/api/install-config"].includes(url.pathname)
     )) return sendJson(res, 200, { ok: false, error: "Upstream Fetch 진행 중입니다. 잠시 후 다시 시도하세요." });
+    if (req.method !== "GET" && releaseNotesManager.isActive() && (
+      url.pathname.startsWith("/api/repos") || ["/api/run-now", "/api/start-task", "/api/register-task", "/api/install-config", "/api/upstream/register", "/api/deploy/start", "/api/ai/config", "/api/deploy/auto"].includes(url.pathname)
+    )) return sendJson(res, 200, { ok: false, error: "릴리스노트 생성이 끝난 후 다시 시도하세요." });
     if (url.pathname === "/api/status" && req.method === "GET") return sendJson(res, 200, await getStatus());
     if (url.pathname === "/api/branches" && req.method === "GET") return sendJson(res, 200, await getBranches());
     if (url.pathname === "/api/upstream/register" && req.method === "POST") return sendJson(res, 200, await registerUpstream(await readBody(req)));
@@ -1066,8 +1075,12 @@ const server = http.createServer(async (req, res) => {
         auto: ws.deploy?.auto || { enabled: false, targetId: "smb" },
         format: ws.deploy?.format || "7z",
         history: state.deployHistory,
-        active: deployManager.getActive()
+        active: deployManager.getActive(),
+        releaseNotes: releaseNotesManager.getState(repoRoot)
       });
+    }
+    if (url.pathname === "/api/deploy/release-notes" && req.method === "POST") {
+      return sendJson(res, 200, await releaseNotesManager.start(await readBody(req)));
     }
     if (url.pathname === "/api/deploy/targets" && req.method === "POST") {
       const body = await readBody(req);

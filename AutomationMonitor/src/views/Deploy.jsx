@@ -31,6 +31,9 @@ export default function DeployView({ flash }) {
   const targets = data?.targets || [];
   const history = data?.history || [];
   const active = data?.active;
+  const releaseNotes = data?.releaseNotes;
+  const notesBusy = releaseNotes?.status === "running";
+  const currentArtifact = artifacts.find((artifact) => artifact.current);
   const auto = data?.auto || { enabled: false };
   const format = data?.format || "7z";
 
@@ -75,6 +78,16 @@ export default function DeployView({ flash }) {
     }
   }
 
+  async function generateNotes(timestamp) {
+    setBusy(true);
+    try {
+      const result = await api("/api/deploy/release-notes", { method: "POST", body: JSON.stringify({ timestamp }) });
+      flash(result.ok ? "info" : "error", result.message || result.error || "릴리스노트가 이미 있습니다.");
+      await refresh();
+    } catch (error) { flash("error", error.message); }
+    finally { setBusy(false); }
+  }
+
   async function saveTargets(next) {
     setData({ ...data, targets: next });
     try {
@@ -115,14 +128,14 @@ export default function DeployView({ flash }) {
 
       <Card title="Installed-Engine Artifacts">
         <div style={{ overflowX: "auto" }}>
-          <div className="table-head" style={{ gridTemplateColumns: "16px minmax(220px,1.5fr) 70px 110px 90px 120px 110px", minWidth: 820 }}>
+          <div className="table-head" style={{ gridTemplateColumns: "16px minmax(220px,1.5fr) 70px 110px 90px 120px 220px", minWidth: 930 }}>
             <span /><span>Artifact</span><span>Label</span><span>Configs</span><span>Size</span><span>Built</span><span />
           </div>
           {artifacts.map((artifact) => (
             <div
               key={artifact.id + artifact.timestamp}
               className="table-row"
-              style={{ gridTemplateColumns: "16px minmax(220px,1.5fr) 70px 110px 90px 120px 110px", minWidth: 820, padding: "13px 18px" }}
+              style={{ gridTemplateColumns: "16px minmax(220px,1.5fr) 70px 110px 90px 120px 220px", minWidth: 930, padding: "13px 18px" }}
             >
               <span className={`dot ${artifact.current ? "success" : artifact.ok ? "mute" : "danger"}`} />
               <div style={{ minWidth: 0 }}>
@@ -130,6 +143,15 @@ export default function DeployView({ flash }) {
                   {artifact.id}
                   {artifact.current && <span className="tag-pill accent">CURRENT</span>}
                 </div>
+                {artifact.current && <div className="cell-sub">
+                  {artifact.releaseNotesExists ? "릴리스노트 준비됨" : notesBusy && releaseNotes.timestamp === artifact.timestamp ? "릴리스노트 생성 중…" : "릴리스노트 없음 · 생성 후 Google Drive 배포 가능"}
+                </div>}
+                {artifact.current && releaseNotes?.timestamp === artifact.timestamp && releaseNotes.status === "failed" && (
+                  <div role="alert" style={{ color: "var(--danger)", fontSize: 12 }}>{releaseNotes.error}</div>
+                )}
+                {artifact.current && releaseNotes?.timestamp === artifact.timestamp && releaseNotes.status === "completed" && !releaseNotes.generated && (
+                  <div className="cell-sub">Git 근거로 생성했습니다. AI 요약은 포함되지 않을 수 있습니다.</div>
+                )}
                 <div className="cell-sub">
                   {artifact.current
                     ? `Ready${artifact.withDDC ? " · DDC included" : " · no DDC"}`
@@ -141,8 +163,9 @@ export default function DeployView({ flash }) {
               <span className="cell-mono-dim">{artifact.sizeBytes != null ? formatSize(artifact.sizeBytes) : "—"}</span>
               <span className="cell-dim">{formatDate(artifact.builtAt?.replace(/(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/, "$1-$2-$3T$4:$5:$6"))}</span>
               <div style={{ display: "flex", gap: 7, justifyContent: "flex-end" }}>
+                {artifact.current && !artifact.releaseNotesExists && <button className="btn sm" disabled={busy || Boolean(active) || notesBusy} onClick={() => generateNotes(artifact.timestamp)}>{notesBusy ? "생성 중…" : "릴리스노트 생성"}</button>}
                 {artifact.current && (
-                  <button className="btn accent sm" disabled={busy || Boolean(active)} onClick={() => deploy(auto.targetId || "smb")}>Deploy</button>
+                  <button className="btn accent sm" disabled={busy || Boolean(active) || notesBusy || ((auto.targetId === "gdrive") && !artifact.releaseNotesExists)} onClick={() => deploy(auto.targetId || "smb")}>Deploy</button>
                 )}
               </div>
             </div>
@@ -235,7 +258,7 @@ export default function DeployView({ flash }) {
                     {target.real && (
                       <div style={{ display: "flex", gap: 7 }}>
                         <button className="btn tiny" onClick={() => beginEdit(target)}>{target.path ? "경로 변경" : "경로 지정"}</button>
-                        <button className="btn tiny" disabled={busy || Boolean(active) || noPath} onClick={() => deploy(target.id)}>{last ? "Re-sync" : "Deploy"}</button>
+                        <button className="btn tiny" disabled={busy || Boolean(active) || notesBusy || noPath || !currentArtifact || (target.id === "gdrive" && !currentArtifact.releaseNotesExists)} onClick={() => deploy(target.id)}>{last ? "Re-sync" : "Deploy"}</button>
                       </div>
                     )}
                   </div>

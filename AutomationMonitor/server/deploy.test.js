@@ -57,6 +57,20 @@ async function fixture(t, { notes = true, compressionFails = false, missingDrive
   return { manager, state, calls, wait, logs, drive };
 }
 
+test("artifact readiness updates only after release notes finish and then permits deployment", async (t) => {
+  const f = await fixture(t, { notes: false });
+  const artifact = (await f.manager.listArtifacts()).find((item) => item.current);
+  assert.equal(artifact.releaseNotesExists, false);
+  assert.equal((await f.manager.startDeploy({ targetId: "gdrive" })).ok, false);
+  await fs.writeFile(artifact.releaseNotesPath + ".partial", "completed notes");
+  assert.equal((await f.manager.listArtifacts())[0].releaseNotesExists, false);
+  await fs.rename(artifact.releaseNotesPath + ".partial", artifact.releaseNotesPath);
+  assert.equal((await f.manager.listArtifacts())[0].releaseNotesExists, true);
+  assert.equal((await f.manager.startDeploy({ targetId: "gdrive" })).ok, true);
+  await f.wait();
+  assert.equal(f.state.deployHistory[0].ok, true);
+});
+
 test("saves archive and UTF-8 notes in desktop sync folder, cleans staging, deploys once", async (t) => {
   const f = await fixture(t);
   await f.manager.checkAutoDeploy();

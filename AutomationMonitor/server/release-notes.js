@@ -5,7 +5,7 @@ import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 const execute = promisify(execFile);
 
-export async function writeReleaseNotes({ repoRoot, base, head, timestamp, outputDirectory, branch, upstream,
+export async function writeReleaseNotes({ repoRoot, base, head, timestamp, outputDirectory, branch, upstream, evidenceNote = "",
   git = async (args) => (await execute("git", args, { cwd: repoRoot, windowsHide: true, encoding: "utf8", maxBuffer: 32 * 1024 * 1024, timeout: 60000 })).stdout,
   request = fetch, log = console.log
 }) {
@@ -61,7 +61,7 @@ export async function writeReleaseNotes({ repoRoot, base, head, timestamp, outpu
     } catch (error) { log(`Release note AI generation unavailable: ${error.message}`); }
   }
   if (!content) content = "## 변경 요약\n\n> AI 요약을 생성하지 못했습니다. 아래는 Git 변경 근거이며, 기능별 AI 요약은 재생성이 필요합니다.\n\n### 변경 통계\n\n```text\n" + stat.trim() + "\n```\n\n### 커밋 근거\n\n```text\n" + commits.trim() + "\n```\n";
-  const text = metadata + `- 작성 방식: ${generated ? "Z.ai 변경 분석" : "Git 근거 기록"}\n\n` + content + "\n\n<details>\n<summary>변경 파일 목록</summary>\n\n```text\n" + (changes.trim() || "변경 없음") + "\n```\n\n</details>\n";
+  const text = metadata + `- 작성 방식: ${generated ? "Z.ai 변경 분석" : "Git 근거 기록"}\n\n` + (evidenceNote ? `> 비교 범위 안내: ${evidenceNote}\n\n` : "") + content + "\n\n<details>\n<summary>변경 파일 목록</summary>\n\n```text\n" + (changes.trim() || "변경 없음") + "\n```\n\n</details>\n";
   await fs.mkdir(outputDirectory, { recursive: true });
   const destination = path.join(outputDirectory, `releasseNote_${timestamp}.md`);
   await fs.writeFile(destination + ".partial", text, "utf8");

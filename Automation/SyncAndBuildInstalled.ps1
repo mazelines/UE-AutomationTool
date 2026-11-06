@@ -356,6 +356,16 @@ try {
     $script:buildExitCode = 0
     $postBuild = Join-Path $scriptDirectory 'InstallBuild\_postbuild.bat'
     $postBuildLog = Join-Path $logDirectory ("InstalledBuild-{0}-postbuild.log" -f $buildTimestamp)
+    # Persist exact revisions before building, including when later post-processing fails.
+    $releaseHead = (& git rev-parse HEAD)
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve build head commit.' }
+    $releaseContext = @{ timestamp = $buildTimestamp; base = "$releaseBaseCommit"; head = "$releaseHead"; branch = $Branch; upstream = "$UpstreamRemote/$UpstreamBranch" }
+    if ($DirectEpic) {
+        $tracking = (& git for-each-ref '--format=%(upstream:short)' "refs/heads/$Branch")
+        if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve build tracking branch.' }
+        $releaseContext.upstream = "$tracking"
+    }
+    [IO.File]::WriteAllText((Join-Path $logDirectory "release-context_$buildTimestamp.json"), ($releaseContext | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
 
     # ponytail: _postbuild.bat saves the build summary for FAILED builds too (it reads
     # BUILD_RESULT), so the env must be ready before the build step and the catch below runs
@@ -447,13 +457,12 @@ try {
         throw "Installed build failed with exit code $script:buildExitCode"
     }
     Invoke-LoggedStep 'Write release notes' {
-        $releaseHead = (& git rev-parse HEAD)
-        if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve release notes head commit.' }
+        $releaseHead = $releaseContext.head
         $notesDirectory = if ($config['Paths.LogDirectory']) { $config['Paths.LogDirectory'] } else { 'LocalBuilds\Logs' }
         if (-not [System.IO.Path]::IsPathRooted($notesDirectory)) { $notesDirectory = Join-Path $RepoRoot $notesDirectory }
         New-Item -ItemType Directory -Force -Path $notesDirectory | Out-Null
         $notesGenerator = Join-Path $PSScriptRoot '..\AutomationMonitor\server\release-notes.js'
-        & node $notesGenerator $RepoRoot $releaseBaseCommit $releaseHead $buildTimestamp $notesDirectory $Branch "$UpstreamRemote/$UpstreamBranch"
+        & node $notesGenerator $RepoRoot $releaseBaseCommit $releaseHead $buildTimestamp $notesDirectory $Branch $releaseContext.upstream
         if ($LASTEXITCODE -ne 0) { throw 'Release notes generation failed.' }
     }
 } finally {
