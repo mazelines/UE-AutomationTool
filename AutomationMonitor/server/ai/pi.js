@@ -39,7 +39,9 @@ export async function createPiSession({ role, repoRoot, config, allowChanges }) 
     if (!model) throw new Error("Pi에서 지원하지 않는 Codex 모델입니다. AI 설정의 모델 이름을 확인하세요.");
   } else {
     const cfg = config.providers?.zai;
-    if (!cfg?.enabled || !cfg.apiKey || !cfg.model || !cfg.baseUrl) throw new Error("AI 설정에 Z.ai를 활성화하고 API 키·모델·Base URL을 저장하세요.");
+    if (!cfg?.enabled) throw new Error("현재 저장소의 Z.ai가 비활성화되어 있습니다. AI 설정에서 Z.ai를 활성화하고 설정 저장을 누르세요.");
+    const missing = [["API 키", cfg.apiKey], ["모델", cfg.model], ["Base URL", cfg.baseUrl]].filter(([, value]) => !value?.trim()).map(([name]) => name);
+    if (missing.length) throw new Error(`현재 저장소의 Z.ai 설정에 ${missing.join("·")}이(가) 없습니다. AI 설정을 저장하세요.`);
     runtime.registerProvider("monitor-zai", { api: "openai-completions", baseUrl: cfg.baseUrl, apiKey: cfg.apiKey,
       models: [{ id: cfg.model, name: cfg.model, reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128000, maxTokens: 8192 }] });
     model = runtime.getModel("monitor-zai", cfg.model);
@@ -85,13 +87,13 @@ export function createPiManager({ getContext, isBusy, makeSession = createPiSess
     sessions.clear();
   }
   async function send({ message, logName, allowChanges = false }) {
-    if (active) return { ok: false, error: "Pi 작업이 진행 중입니다." };
+    if (active) return { ok: false, error: "Mazeline 작업이 진행 중입니다." };
     if (typeof message !== "string" || !message.trim() || message.length > 12000) return { ok: false, error: "1~12000자의 메시지를 입력하세요." };
     if (typeof allowChanges !== "boolean") return { ok: false, error: "수정 허용 설정이 올바르지 않습니다." };
     active = true;
     cancelled = false;
     try {
-      if (await isBusy()) throw new Error("빌드·배포·Upstream Fetch가 끝난 후 Pi를 실행하세요.");
+      if (await isBusy()) throw new Error("빌드·배포·Upstream Fetch가 끝난 후 Mazeline을 실행하세요.");
       const ctx = await getContext(logName);
       if (!ctx?.repoRoot) throw new Error("저장소를 먼저 선택하세요.");
       if (conversation && (conversation.repoRoot !== ctx.repoRoot || conversation.logName !== ctx.logName || conversation.allowChanges !== allowChanges)) throw new Error("대상 또는 수정 권한을 바꾸려면 새 대화를 시작하세요.");

@@ -41,7 +41,7 @@ Skip Upstream Sync, Skip Push Origin, Allow Merge Commit은 기존 fork 모드�
 ```
 
 Unreal Engine 소스 저장소의 **nightly upstream sync**와 **installed-engine build**를 모니터링·실행·배포하는 웹 대시보드입니다.  
-`Automation/SyncAndBuildInstalled.ps1` 파이프라인을 감시하고, Windows 작업 스케줄러 등록, 로그 열람, 디스크·upstream 상태 알림, SMB·Google Drive 배포, 릴리스 노트 생성, AI 진단과 Pi 에이전트 대화를 한 화면에서 처리합니다.
+`Automation/SyncAndBuildInstalled.ps1` 파이프라인을 감시하고, Windows 작업 스케줄러 등록, 로그 열람, 디스크·upstream 상태 알림, SMB·Google Drive 배포, 릴리스 노트 생성, AI 진단과 Mazeline 에이전트 대화를 한 화면에서 처리합니다.
 
 이 도구는 자신만의 디렉터리에서 독립적으로 실행되며, 빌드·배포 대상이 되는 언리얼 엔진 클론과는 별도로 존재합니다. 대시보드 상단의 저장소 선택기에서 로컬에 클론된 UE 저장소를 등록·전환하며, 각 저장소는 자신만의 빌드 설정·배포 타깃·알림 설정을 독립적으로 가집니다. 자세한 내용은 [저장소 선택](#저장소-선택)을 참고하세요.
 
@@ -128,9 +128,9 @@ API 응답 대기는 최대 3분이며 응답 토큰 상한은 8,192입니다. Z
 - **토큰 예산**: `maxTokens`(기본 120,000)에 맞춰 긴 로그는 앞부분(맥락)과 뒷부분(에러)을 남기고 중간을 잘라 보냅니다.
 - **API 키 보호**: 저장된 키는 조회 시 `[REDACTED]`로 마스킹되며, 재저장해도 기존 키가 유지됩니다. 진단 결과는 `workspace.json`의 `ai.diagnostics`에 run 로그 이름별로 저장됩니다.
 
-### Pi 에이전트
+### Mazeline 에이전트
 
-AI Diagnostics 오른쪽의 Pi 패널에서 빌드 로그를 두 역할의 에이전트와 함께 검토합니다. `@earendil-works/pi-coding-agent` SDK가 프로젝트에 포함되므로 전역 Pi CLI 설치는 필요하지 않습니다.
+AI Diagnostics 오른쪽의 Mazeline 패널에서 빌드 로그를 두 역할의 에이전트와 함께 검토합니다. `@earendil-works/pi-coding-agent` SDK가 프로젝트에 포함되므로 전역 Pi CLI 설치는 필요하지 않습니다.
 
 - **Z.ai · CI/CD 담당**: 선택한 실행의 로그·진단 결과와 파이프라인을 분석합니다.
 - **Codex · 개발 총괄**: Z.ai의 보고를 받아 수정 방향과 실제 검증 결과를 검토합니다.
@@ -140,12 +140,12 @@ AI 설정의 Z.ai 활성화 상태·API 키·모델·Base URL을 사용합니다
 사용 순서:
 
 1. AI Diagnostics의 설정에서 Z.ai를 활성화하고 API 키·Base URL·모델을 저장합니다. 서버 계정의 Codex 로그인도 준비합니다.
-2. 오른쪽 Pi 패널에서 대상 실행을 선택합니다. **최근 실행**은 가장 최근 실행을 사용합니다.
+2. 오른쪽 Mazeline 패널에서 대상 실행을 선택합니다. **최근 실행**은 가장 최근 실행을 사용합니다.
 3. 분석만 필요하면 기본 모드를 사용하고, 실제 수정이 필요하면 **로컬 파일 수정·명령 실행 허용**을 켭니다.
 4. 요청을 입력하고 **보내기**를 누릅니다. 역할별 응답과 도구 실행 결과를 확인합니다.
 5. 수정 후 필요한 검증을 검토하고 빌드는 Run & Pipeline에서 별도로 실행합니다.
 
-응답 영역은 기본적으로 화면 높이의 약 65%이며 오른쪽 아래 모서리를 드래그해 세로 크기를 조절할 수 있습니다. 좁은 화면에서는 Pi 패널이 진단 설정 아래로 이동합니다.
+응답 영역은 기본적으로 화면 높이의 약 65%이며 오른쪽 아래 모서리를 드래그해 세로 크기를 조절할 수 있습니다. 좁은 화면에서는 Mazeline 패널이 진단 설정 아래로 이동합니다.
 
 대상 실행을 선택하고 메시지를 보내면 Z.ai 분석 후 Codex 검토가 순서대로 진행됩니다. 기본 도구는 `read`, `grep`, `find`, `ls`입니다. **로컬 파일 수정·명령 실행 허용**을 켜고 시작한 대화에서는 `edit`, `write`, PowerShell 도구도 활성화됩니다. 커밋·푸시·배포·전체 빌드·자격 증명 변경을 하지 않도록 에이전트에 지시합니다. 명령 도구 자체는 운영체제 샌드박스가 아니므로 실행 결과를 검토하세요.
 
@@ -359,7 +359,7 @@ Overview의 Nightly 시간과 Next nightly는 실제 Windows 작업의 예약 �
 
 Upstream ahead는 저장소 활성화 시와 이후 **5분마다 자동 Fetch**하여 최신 원격 커밋을 반영합니다. 서버는 1분마다 실행 시점을 확인하며, 설정된 upstream 브랜치만 가져옵니다. Fetch 성공 시 Git 상태 캐시를 지워 화면의 다음 갱신에 반영합니다. 자동 Fetch는 병합·커밋·푸시를 수행하지 않습니다.
 
-빌드·예약 작업·Pi 에이전트 실행 중이거나 upstream 동기화가 비활성화된 저장소에서는 건너뜁니다. Fetch 중에는 새 빌드·Pi 에이전트 실행·저장소 전환을 잠시 차단합니다. 원격 인증은 기존 Git 인증을 사용하며 대화형 로그인 창은 띄우지 않습니다. Fetch는 최대 2분 대기하고, 실패 이유를 `monitor.log`에 기록한 뒤 다음 주기에 재시도합니다. 외부에서 직접 시작하는 Git 작업이나 예약 작업과의 동시 실행까지 잠그지는 않습니다.
+빌드·예약 작업·Mazeline 에이전트 실행 중이거나 upstream 동기화가 비활성화된 저장소에서는 건너뜁니다. Fetch 중에는 새 빌드·Mazeline 에이전트 실행·저장소 전환을 잠시 차단합니다. 원격 인증은 기존 Git 인증을 사용하며 대화형 로그인 창은 띄우지 않습니다. Fetch는 최대 2분 대기하고, 실패 이유를 `monitor.log`에 기록한 뒤 다음 주기에 재시도합니다. 외부에서 직접 시작하는 Git 작업이나 예약 작업과의 동시 실행까지 잠그지는 않습니다.
 
 ## 트러블슈팅
 
@@ -385,9 +385,9 @@ Upstream ahead는 저장소 활성화 시와 이후 **5분마다 자동 Fetch**�
 
 Smart App Control에는 개별 앱만 허용하는 예외 기능이 없습니다. 조직이 관리하는 WDAC·AppLocker의 허용 정책과는 구분해야 합니다. 최근 Windows 업데이트에서는 Smart App Control을 Windows 재설치 없이 다시 켤 수 있으며, 해당 PC에서 제공되는 설정을 확인하세요. [Microsoft Smart App Control FAQ](https://support.microsoft.com/en-us/windows/security/threat-malware-protection/smart-app-control-frequently-asked-questions)
 
-### Pi 패널 연결 또는 모델 실행이 실패할 때
+### Mazeline 패널 연결 또는 모델 실행이 실패할 때
 
-- Pi 패널에 연결 실패가 표시되면 최신 서버가 실행 중인지 확인합니다. 프론트엔드 변경은 개발 서버에 바로 반영되지만 새 API는 `Start-Dev.cmd` 또는 `Start-Prod.cmd`로 서버를 재시작해야 적용됩니다. 런처는 일반 실행에서도 UAC 승인을 요청합니다.
+- Mazeline 패널에 연결 실패가 표시되면 최신 서버가 실행 중인지 확인합니다. 프론트엔드 변경은 개발 서버에 바로 반영되지만 새 API는 `Start-Dev.cmd` 또는 `Start-Prod.cmd`로 서버를 재시작해야 적용됩니다. 런처는 일반 실행에서도 UAC 승인을 요청합니다.
 - 서버 PC에서 `http://127.0.0.1:5173` 또는 `http://127.0.0.1:4174`로 접속합니다. Pi API는 다른 PC의 요청을 허용하지 않습니다.
 - Codex 로그인 오류는 서버 계정에서 `codex login` 후 **새 대화**로 재시도합니다. Z.ai 오류는 저장된 활성화 상태·API 키·Base URL·모델을 확인합니다.
 - 빌드·배포·Fetch가 진행 중이면 종료 후 실행합니다. 대상이나 수정 허용 설정을 변경하려면 **새 대화**를 시작합니다.
@@ -432,7 +432,7 @@ node --test server/*.test.js
 npm.cmd run build
 ```
 
-테스트는 실제 Google Drive 업로드·Pi 에이전트 실행·SDK 및 7-Zip 설치를 실행하지 않고 작업 흐름·실패 처리·중복 실행 방지와 도구 설치 분기를 검증합니다.
+테스트는 실제 Google Drive 업로드·Mazeline 에이전트 실행·SDK 및 7-Zip 설치를 실행하지 않고 작업 흐름·실패 처리·중복 실행 방지와 도구 설치 분기를 검증합니다.
 
 ## 라이선스
 

@@ -1,5 +1,6 @@
 import http from "node:http";
 import { createPiManager } from "./ai/pi.js";
+import { mergeProviderConfig } from "./ai/config.js";
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import fssync from "node:fs";
@@ -1027,17 +1028,7 @@ const server = http.createServer(async (req, res) => {
         for (const id of Object.keys(DEFAULT_AI_PROVIDERS)) {
           const incoming = body.providers[id] || {};
           const base = ws.ai.providers?.[id] || { ...DEFAULT_AI_PROVIDERS[id] };
-          ws.ai.providers[id] = {
-            ...base,
-            enabled: id === "codex" ? true : Boolean(incoming.enabled),
-            // "[REDACTED]" is the sanitized placeholder the GET route hands the browser —
-            // treat it as "keep the stored key" so a re-save never destroys the real key.
-            apiKey: incoming.apiKey === "[REDACTED]" ? base.apiKey
-              : typeof incoming.apiKey === "string" ? incoming.apiKey : base.apiKey,
-            baseUrl: typeof incoming.baseUrl === "string" ? incoming.baseUrl : base.baseUrl,
-            model: typeof incoming.model === "string" ? incoming.model : base.model,
-            cliPath: typeof incoming.cliPath === "string" ? incoming.cliPath : base.cliPath
-          };
+          ws.ai.providers[id] = mergeProviderConfig(id, base, incoming);
         }
       }
       await workspace.save();
