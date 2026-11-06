@@ -9,6 +9,8 @@ export const STAGE_NAMES = [
   "Fetch origin and upstream",
   "Checkout build branch",
   "Merge upstream into local branch",
+  "Fetch Epic source",
+  "Reapply local patches on Epic source",
   "Check for merge conflict markers",
   "Push synced branch to fork origin",
   "Sync Unreal dependencies",
@@ -19,7 +21,7 @@ export const STAGE_NAMES = [
 ];
 
 // Relative weight of each stage in the overall progress bar (build dominates).
-const STAGE_WEIGHTS = [1, 4, 2, 8, 12, 3, 1, 4, 8, 20, 3, 160, 6];
+const STAGE_WEIGHTS = [1, 4, 2, 8, 12, 3, 8, 3, 1, 4, 8, 20, 3, 160, 6];
 const TOTAL_WEIGHT = STAGE_WEIGHTS.reduce((a, b) => a + b, 0);
 export const BUILD_STAGE = "Build Win64 installed engine";
 

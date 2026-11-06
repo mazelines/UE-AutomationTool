@@ -156,9 +156,15 @@ export default function RunPipelineView({ status, installConfig, setInstallConfi
                 />
               </Field>
             </div>
+            <Field label="Build workflow" hint="Epic 직접 모드는 fetch → 로컬 패치 커밋 rebase → 빌드. Push·PR 자동 실행 없음. 패치는 먼저 커밋하세요.">
+              <select value={options.directEpic ? "epic" : "fork"} onChange={(event) => patchOptions({ directEpic: event.target.value === "epic" })}>
+                <option value="fork">Fork sync (merge + optional push)</option>
+                <option value="epic">Epic direct (local patches, no push)</option>
+              </select>
+            </Field>
             <div className="section-label" style={{ margin: "16px 0 12px" }}>Sync flags</div>
             <div className="tile-grid-2">
-              {SYNC_FLAGS.map(({ key, label, caption }) => (
+              {SYNC_FLAGS.filter(({ key }) => !options.directEpic || !["skipUpstreamSync", "skipPushOrigin", "allowMergeCommit"].includes(key)).map(({ key, label, caption }) => (
                 <CheckTile
                   key={key}
                   label={label}
@@ -229,6 +235,9 @@ export default function RunPipelineView({ status, installConfig, setInstallConfi
               </label>
             </div>
 
+            {options.directEpic ? (
+              <p className="page-sub" style={{ marginTop: 20 }}>Epic direct는 클론의 Git 추적 원격·브랜치를 자동으로 사용합니다. 별도 Upstream 설정은 필요하지 않습니다.</p>
+            ) : (<>
             <div className="section-label" style={{ margin: "20px 0 12px" }}>Upstream sync</div>
             <div className="field-grid">
               <Field label="Upstream Remote">
@@ -267,6 +276,7 @@ export default function RunPipelineView({ status, installConfig, setInstallConfi
               </span>
             </div>
 
+            </>)}
             <div className="section-label" style={{ margin: "20px 0 12px" }}>Build targets</div>
             <div className="tile-grid-3">
               {BUILD_TARGETS.map(({ section, key, label }) => (

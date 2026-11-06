@@ -248,6 +248,7 @@ async function buildAutomationArgs(input = {}) {
   args.push(...boolArg(input.noClean, "-NoClean"));
   args.push(...boolArg(input.skipUpstreamSync, "-SkipUpstreamSync"));
   args.push(...boolArg(input.skipPushOrigin, "-SkipPushOrigin"));
+  args.push(...boolArg(input.directEpic, "-DirectEpic"));
   args.push(...boolArg(input.allowMergeCommit, "-AllowMergeCommit"));
   if (input.noDdc) args.push("-NoDDC");
   return args;
@@ -813,6 +814,7 @@ async function registerTask(input) {
   args.push(...boolArg(input.noClean, "-NoClean"));
   args.push(...boolArg(input.skipUpstreamSync, "-SkipUpstreamSync"));
   args.push(...boolArg(input.skipPushOrigin, "-SkipPushOrigin"));
+  args.push(...boolArg(input.directEpic, "-DirectEpic"));
   args.push(...boolArg(input.allowMergeCommit, "-AllowMergeCommit"));
   if (input.noDdc) args.push("-NoDDC");
 

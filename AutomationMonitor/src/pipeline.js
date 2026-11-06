@@ -1,4 +1,6 @@
 export const STAGE_SHORT = {
+  "Fetch Epic source": "Fetch Epic",
+  "Reapply local patches on Epic source": "Local patches",
   "Check application control policy": "App control",
   "Validate repository state": "Validate",
   "Configure upstream remote": "Upstream",

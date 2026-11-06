@@ -41,7 +41,10 @@ if not "%BUILT_DIRECTORY%"=="" (
     set "WINDOWS_BUILD_DIR=%OUTPUT_DIR%\Windows"
     set "FINAL_ENGINE_DIR=%OUTPUT_DIR%\Windows"
 )
-set "LOG_DIR=%ROOT_DIR%\%BUILD_LOG_DIR%"
+set "LOG_DIR=%BUILD_LOG_DIR%"
+if not "%BUILD_LOG_DIR:~1,1%"==":" if not "%BUILD_LOG_DIR:~0,2%"=="\\" set "LOG_DIR=%ROOT_DIR%\%BUILD_LOG_DIR%"
+if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
+if not exist "%LOG_DIR%" exit /b 1
 
 REM ----------------------------------------------------------------------------
 REM 1. 빌드 결과 확인
@@ -66,6 +69,7 @@ if not "%BUILT_DIRECTORY%"=="" set "WINDOWS_DIR=%BUILT_DIRECTORY%\Windows"
 
 set "BUILD_CHECK_DIR=%WINDOWS_BUILD_DIR%"
 if not "%SOURCE_ENGINE_DIR%"=="" if exist "%SOURCE_ENGINE_DIR%" set "BUILD_CHECK_DIR=%SOURCE_ENGINE_DIR%"
+if not "%TARGET_ENGINE_DIR%"=="" if exist "%TARGET_ENGINE_DIR%" set "BUILD_CHECK_DIR=%TARGET_ENGINE_DIR%"
 
 if not exist "%BUILD_CHECK_DIR%" (
     echo [ERROR] Build output not found: %BUILD_CHECK_DIR%
@@ -84,26 +88,12 @@ if not "%BUILT_DIRECTORY%"=="" (
     echo [2/5] Moving installed build to final location...
 
     if exist "%WINDOWS_DIR%" (
-        REM 이전 빌드 산출물이 있으면 삭제
-        if exist "%TARGET_ENGINE_DIR%" (
-            echo       Removing previous Engine directory...
-            rmdir /s /q "%TARGET_ENGINE_DIR%"
-        )
-        if exist "%BUILT_DIRECTORY%\FeaturePacks" rmdir /s /q "%BUILT_DIRECTORY%\FeaturePacks"
-        if exist "%BUILT_DIRECTORY%\Templates" rmdir /s /q "%BUILT_DIRECTORY%\Templates"
-
-        echo       Moving %WINDOWS_DIR% contents to %BUILT_DIRECTORY%...
-        REM move = 같은 볼륨에서 rename이라 즉시 완료됨 (robocopy /MOVE는 수백 GB를 복사 후 삭제하므로 금지)
-        for /d %%D in ("%WINDOWS_DIR%\*") do move /y "%%~fD" "%BUILT_DIRECTORY%\" >nul
-        for %%F in ("%WINDOWS_DIR%\*") do move /y "%%~fF" "%BUILT_DIRECTORY%\" >nul
-        rmdir "%WINDOWS_DIR%" 2>nul
-
-        if exist "%TARGET_ENGINE_DIR%" (
-            echo       Installed build moved successfully.
-        ) else (
-            echo [ERROR] Failed to move installed build. Check %WINDOWS_DIR% manually.
+        powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%Finalize-InstalledBuild.ps1"
+        if errorlevel 1 (
             set "BUILD_RESULT=1"
+            goto :save_summary
         )
+        echo       Installed build moved successfully.
     ) else (
         echo [WARNING] Source directory not found: %WINDOWS_DIR%
         if exist "%TARGET_ENGINE_DIR%" echo           Installed build already at final location.
@@ -222,6 +212,7 @@ set "SUMMARY_FILE=%LOG_DIR%\build_summary_%BUILD_TIMESTAMP%.txt"
     echo.
     echo ============================================================
 ) > "%SUMMARY_FILE%"
+if errorlevel 1 exit /b 1
 
 echo       Summary saved: %SUMMARY_FILE%
 

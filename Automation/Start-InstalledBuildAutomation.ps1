@@ -1,5 +1,7 @@
 ﻿[CmdletBinding()]
 param(
+    [Parameter(Mandatory = $true)][string]$RepoRoot,
+    [switch]$DirectEpic,
     [ValidateSet('Now', 'RegisterTask', 'RegisterTaskAndRun')]
     [string]$Mode = 'Now',
     [string]$TaskName = 'UE6 Nightly Upstream Sync And Installed Build',
@@ -23,6 +25,7 @@ $registerScript = Join-Path $scriptDirectory 'Register-NightlyInstalledBuildTask
 
 function New-CommonArguments {
     $arguments = @(
+        '-RepoRoot', $RepoRoot,
         '-Branch', $Branch,
         '-BuiltDirectory', $BuiltDirectory
     )
@@ -31,6 +34,7 @@ function New-CommonArguments {
     if ($SkipGenerateProjectFiles) { $arguments += '-SkipGenerateProjectFiles' }
     if ($NoClean) { $arguments += '-NoClean' }
     if ($SkipPushOrigin) { $arguments += '-SkipPushOrigin' }
+    if ($DirectEpic) { $arguments += '-DirectEpic' }
     if ($NoDDC) { $arguments += '-NoDDC' }
 
     return $arguments
@@ -46,6 +50,7 @@ function Invoke-ImmediateBuild {
 
 function Register-NightlyTask {
     $arguments = @(
+        '-RepoRoot', $RepoRoot,
         '-TaskName', $TaskName,
         '-At', $At,
         '-Branch', $Branch,
@@ -56,6 +61,7 @@ function Register-NightlyTask {
     if ($SkipGenerateProjectFiles) { $arguments += '-SkipGenerateProjectFiles' }
     if ($NoClean) { $arguments += '-NoClean' }
     if ($SkipPushOrigin) { $arguments += '-SkipPushOrigin' }
+    if ($DirectEpic) { $arguments += '-DirectEpic' }
     if ($NoDDC) { $arguments += '-NoDDC' }
     if ($AllowMergeCommit) { $arguments += '-AllowMergeCommit' }
 

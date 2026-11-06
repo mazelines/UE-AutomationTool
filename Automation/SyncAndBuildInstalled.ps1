@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
     [string]$RepoRoot,
     [string]$Branch,
@@ -13,6 +13,7 @@ param(
     [switch]$NoClean,
     [switch]$SkipUpstreamSync,
     [switch]$SkipPushOrigin,
+    [switch]$DirectEpic,
     [string]$InstallConfig,
     [bool]$WithDDC = $true,
     [switch]$NoDDC,
@@ -23,6 +24,8 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $scriptDirectory = Split-Path -Parent $PSCommandPath
+. (Join-Path $scriptDirectory 'Sync-DirectEpic.ps1')
+. (Join-Path $scriptDirectory 'Invoke-PostBuild.ps1')
 
 # This script now ships separately from the UE clone it builds (previously $scriptDirectory\..
 # WAS the clone); the target repo must be passed explicitly, normally by AutomationMonitor
@@ -153,7 +156,9 @@ Start-Transcript -Path $logPath -Append | Out-Null
 try {
     Write-Host "Repository: $RepoRoot"
     Write-Host "Branch: $Branch"
-    if ($SkipUpstreamSync) {
+    if ($DirectEpic) {
+        Write-Host "Workflow: Epic direct -> reapply local patch commits -> build (no push)"
+    } elseif ($SkipUpstreamSync) {
         Write-Host "Upstream: sync disabled (SkipUpstreamSync) — building $Branch as-is"
     } else {
         Write-Host "Upstream: $UpstreamRemote -> $UpstreamUrl ($UpstreamBranch)"
@@ -195,7 +200,7 @@ try {
         # always resurface as tracked changes, blocking the sync. Discard them every run so
         # the working tree is clean before fetch/merge — they are build-generated, not authored.
         $templateChanges = @(& git status --porcelain --untracked-files=no -- Templates)
-        if ($templateChanges.Count -gt 0) {
+        if (-not $DirectEpic -and $templateChanges.Count -gt 0) {
             & git checkout -- Templates
             Write-Host "Discarded $($templateChanges.Count) tracked change(s) under Templates/ before sync."
         }
@@ -214,6 +219,10 @@ try {
             throw "Tracked local changes exist outside automation tooling. Commit, stash, or revert them before running the automated sync.`n$($blockingChanges -join [Environment]::NewLine)"
         }
 
+        if ($DirectEpic -and $trackedChanges) {
+            throw 'Epic direct mode requires a clean tracked working tree. Commit local patches before running.'
+        }
+
         if ($trackedChanges) {
             Write-Host 'Ignoring tracked changes under Automation/ and AutomationMonitor/ for sync safety check.'
         }
@@ -230,61 +239,66 @@ try {
         }
     }
 
-    if (-not $SkipUpstreamSync) {
-        Invoke-LoggedStep 'Configure upstream remote' {
-            $remoteNames = & git remote
-            if ($LASTEXITCODE -ne 0) {
-                throw 'git remote failed.'
-            }
-
-            if ($remoteNames -contains $UpstreamRemote) {
-                Invoke-Git remote set-url $UpstreamRemote $UpstreamUrl
-            } else {
-                Invoke-Git remote add $UpstreamRemote $UpstreamUrl
-            }
-        }
+    if ($DirectEpic) {
+        Invoke-DirectEpicSync -LocalBranch $Branch
     } else {
-        Write-Host 'Skipping upstream remote configuration because -SkipUpstreamSync was provided.'
-    }
-
-    Invoke-LoggedStep 'Fetch origin and upstream' {
-        # -c http.version=HTTP/1.1: git's HTTP/2 multiplexing corrupts large packfiles on Windows
-        # ("inflate: data stream error / invalid index-pack output"); force HTTP/1.1 on the network fetch.
-        Invoke-Git -c http.version=HTTP/1.1 fetch --prune $OriginRemote $Branch
         if (-not $SkipUpstreamSync) {
-            Invoke-Git -c http.version=HTTP/1.1 fetch --prune $UpstreamRemote $UpstreamBranch
+            Invoke-LoggedStep 'Configure upstream remote' {
+                $remoteNames = & git remote
+                if ($LASTEXITCODE -ne 0) {
+                    throw 'git remote failed.'
+                }
+
+                if ($remoteNames -contains $UpstreamRemote) {
+                    Invoke-Git remote set-url $UpstreamRemote $UpstreamUrl
+                } else {
+                    Invoke-Git remote add $UpstreamRemote $UpstreamUrl
+                }
+            }
         } else {
-            Write-Host 'Skipping upstream fetch because -SkipUpstreamSync was provided.'
-        }
-    }
-
-    Invoke-LoggedStep 'Checkout build branch' {
-        $branchExists = $true
-        & git rev-parse --verify --quiet $Branch | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-            $branchExists = $false
+            Write-Host 'Skipping upstream remote configuration because -SkipUpstreamSync was provided.'
         }
 
-        if ($branchExists) {
-            Invoke-Git checkout $Branch
-        } else {
-            Invoke-Git checkout -b $Branch "$OriginRemote/$Branch"
-        }
-    }
-
-    $releaseBaseCommit = (& git rev-parse HEAD)
-    if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve release notes base commit.' }
-    if (-not $SkipUpstreamSync) {
-        Invoke-LoggedStep 'Merge upstream into local branch' {
-            if ($AllowMergeCommit) {
-                Invoke-Git merge --no-edit "$UpstreamRemote/$UpstreamBranch"
+        Invoke-LoggedStep 'Fetch origin and upstream' {
+            # -c http.version=HTTP/1.1: git's HTTP/2 multiplexing corrupts large packfiles on Windows
+            # ("inflate: data stream error / invalid index-pack output"); force HTTP/1.1 on the network fetch.
+            Invoke-Git -c http.version=HTTP/1.1 fetch --prune $OriginRemote $Branch
+            if (-not $SkipUpstreamSync) {
+                Invoke-Git -c http.version=HTTP/1.1 fetch --prune $UpstreamRemote $UpstreamBranch
             } else {
-                Invoke-Git merge --ff-only "$UpstreamRemote/$UpstreamBranch"
+                Write-Host 'Skipping upstream fetch because -SkipUpstreamSync was provided.'
             }
         }
-    } else {
-        Write-Host 'Skipping upstream merge because -SkipUpstreamSync was provided.'
-    }
+
+        Invoke-LoggedStep 'Checkout build branch' {
+            $branchExists = $true
+            & git rev-parse --verify --quiet $Branch | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                $branchExists = $false
+            }
+
+            if ($branchExists) {
+                Invoke-Git checkout $Branch
+            } else {
+                Invoke-Git checkout -b $Branch "$OriginRemote/$Branch"
+            }
+        }
+
+        $releaseBaseCommit = (& git rev-parse HEAD)
+        if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve release notes base commit.' }
+        if (-not $SkipUpstreamSync) {
+            Invoke-LoggedStep 'Merge upstream into local branch' {
+                if ($AllowMergeCommit) {
+                    Invoke-Git merge --no-edit "$UpstreamRemote/$UpstreamBranch"
+                } else {
+                    Invoke-Git merge --ff-only "$UpstreamRemote/$UpstreamBranch"
+                }
+            }
+        } else {
+            Write-Host 'Skipping upstream merge because -SkipUpstreamSync was provided.'
+        }
+
+    } # Fork workflow
 
     # ponytail: a conflict "resolved" by committing the markers verbatim (NessUObjectBindings.cpp,
     # 2026-07-24) survives every later merge and is only caught by the compiler ~90 minutes in.
@@ -297,12 +311,12 @@ try {
         }
     }
 
-    if (-not $SkipPushOrigin) {
+    if (-not $DirectEpic -and -not $SkipPushOrigin) {
         Invoke-LoggedStep 'Push synced branch to fork origin' {
             Invoke-Git push $OriginRemote "${Branch}:${Branch}"
         }
     } else {
-        Write-Host 'Skipping push to origin because -SkipPushOrigin was provided.'
+        Write-Host 'Skipping push to origin (Epic direct mode or SkipPushOrigin).'
     }
 
     if (-not $SkipDependencySync) {
@@ -341,6 +355,7 @@ try {
     $buildTimestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
     $script:buildExitCode = 0
     $postBuild = Join-Path $scriptDirectory 'InstallBuild\_postbuild.bat'
+    $postBuildLog = Join-Path $logDirectory ("InstalledBuild-{0}-postbuild.log" -f $buildTimestamp)
 
     # ponytail: _postbuild.bat saves the build summary for FAILED builds too (it reads
     # BUILD_RESULT), so the env must be ready before the build step and the catch below runs
@@ -412,7 +427,7 @@ try {
         $env:BUILD_RESULT = "$script:buildExitCode"
         if (Test-Path $postBuild) {
             Write-Host 'Build step failed — running post-processing to save the failure summary.'
-            & cmd.exe /d /s /c "`"$postBuild`" < NUL"
+            $null = Invoke-InstalledBuildPostProcessing -ScriptPath $postBuild -LogPath $postBuildLog
         }
         throw
     }
@@ -421,9 +436,9 @@ try {
         Invoke-LoggedStep 'Install build post-processing' {
             # Environment (BUILD_RESULT etc.) was set before the build step so the failed-build
             # catch path can run this same script for its failure summary.
-            & cmd.exe /d /s /c "`"$postBuild`" < NUL"
-            if ($LASTEXITCODE -ne 0 -and $script:buildExitCode -eq 0) {
-                throw "_postbuild.bat failed with exit code $LASTEXITCODE"
+            $postExitCode = Invoke-InstalledBuildPostProcessing -ScriptPath $postBuild -LogPath $postBuildLog
+            if ($postExitCode -ne 0 -and $script:buildExitCode -eq 0) {
+                throw "_postbuild.bat failed with exit code $postExitCode — see $postBuildLog"
             }
         }
     }

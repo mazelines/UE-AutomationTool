@@ -1,5 +1,45 @@
 # AutomationMonitor
 
+### BuildGraph 성공 후 후처리만 복구
+
+설치 산출물 이동 실패 시 전체 Clean 빌드를 반복하지 않고 다음 명령으로 후처리만 재실행할 수 있습니다.
+기존 BuildGraph 로그의 `ExitCode=0 (Success)`와 설치 빌드 표식을 확인한 뒤 진행합니다.
+기존 요약은 별도 백업으로 보존하며, stdout/stderr는 `LocalBuilds/AutomationLogs/*-postbuild-recovery-*.log`에 저장합니다.
+
+```powershell
+.\Automation\Resume-InstalledBuildPostProcessing.ps1 -RepoRoot D:\UnrealEngine\epicUE6 -BuildTimestamp 20261105-152945
+```
+
+이동은 `Windows`의 각 항목을 같은 볼륨 안에서 이름 변경하는 방식입니다. 기존 대상 폴더는 삭제하거나 병합하지 않습니다.
+대상 이름이 충돌하면 이동 전에 중단하며, OS 오류가 발생하면 상세 예외와 이동 경로를 로그에 남깁니다.
+부분 이동 상태에서는 이미 이동된 항목을 보존하고 남은 항목만 이어서 처리합니다.
+일반 빌드의 후처리 로그도 `InstalledBuild-<timestamp>-postbuild.log`로 별도 저장합니다.
+
+### Epic 직접 빌드 워크플로우
+
+Run & Pipeline → Run Options → Build workflow에서 **Epic direct**를 선택합니다.
+Install Build Config의 Branch는 로컬 패치 커밋을 유지할 빌드 브랜치로 지정합니다.
+Epic direct는 해당 브랜치의 Git 추적 원격·브랜치를 자동으로 사용합니다.
+새 빌드 브랜치를 만들 때는 현재 체크아웃한 클론 브랜치의 추적 정보를 이어받습니다.
+별도 Upstream URL·Remote·Branch 입력은 필요하지 않으며 기존 설정은 이 모드에 적용되지 않습니다.
+추적 원격 URL이 `https://github.com/EpicGames/UnrealEngine.git`인지 확인하며 자동 변경하지 않습니다.
+추적 정보가 없는 기존 브랜치는 Git에서 추적 브랜치를 지정한 후 실행해야 합니다.
+
+이 모드는 Epic fetch → 로컬 패치 커밋 rebase → 의존성 동기화 → installed build를 수행합니다.
+Fork origin fetch/merge/push 및 PR 생성은 수행하지 않습니다. 필요한 PR은 수동으로 진행합니다.
+Skip Upstream Sync, Skip Push Origin, Allow Merge Commit은 기존 fork 모드에만 적용됩니다.
+즉시 실행과 예약 실행 모두 지원하며, 모드 변경 후 예약 작업은 다시 등록해야 합니다.
+
+패치는 먼저 로컬 커밋으로 저장하세요. 추적 파일에 미커밋 변경이 있으면 중단하며 자동 stash나 커밋은 하지 않습니다.
+처음부터 Epic을 직접 clone한 별도 저장소를 등록해서 사용하는 것을 권장합니다.
+기존 fork의 브랜치를 선택하면 Epic에 없는 로컬 커밋 전체가 rebase 대상이 됩니다.
+충돌 시 빌드 전에 중단합니다. 해당 저장소에서 해결 후 `git rebase --continue`하거나
+`git rebase --abort`한 뒤 다시 실행하세요. Epic 인증은 기존 Git 인증을 사용합니다.
+
+```powershell
+.\Automation\SyncAndBuildInstalled.ps1 -RepoRoot D:\UnrealEngine\EpicSource -Branch local-build -DirectEpic
+```
+
 Unreal Engine 소스 저장소의 **nightly upstream sync**와 **installed-engine build**를 모니터링·실행·배포하는 웹 대시보드입니다.  
 `Automation/SyncAndBuildInstalled.ps1` 파이프라인을 감시하고, Windows 작업 스케줄러 등록, 로그 열람, 디스크·upstream 상태 알림, SMB·Google Drive 배포, 릴리스 노트 생성, AI 진단과 Pi 에이전트 대화를 한 화면에서 처리합니다.
 

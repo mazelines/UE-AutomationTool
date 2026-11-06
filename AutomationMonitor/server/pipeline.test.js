@@ -34,7 +34,7 @@ const SUCCESS_LOG = [
 
 test("STAGE_NAMES includes the SCC preflight stage first", () => {
   assert.equal(STAGE_NAMES[0], "Check application control policy");
-  assert.equal(STAGE_NAMES.length, 13);
+  assert.equal(STAGE_NAMES.length, 15);
   assert.equal(STAGE_NAMES.length, STAGE_NAMES.filter((n, i, a) => a.indexOf(n) === i).length);
 });
 

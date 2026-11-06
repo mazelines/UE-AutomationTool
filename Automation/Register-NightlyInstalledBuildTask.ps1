@@ -11,6 +11,7 @@ param(
     [switch]$NoClean,
     [switch]$SkipUpstreamSync,
     [switch]$SkipPushOrigin,
+    [switch]$DirectEpic,
     [switch]$NoDDC,
     [switch]$AllowMergeCommit
 )
@@ -41,6 +42,7 @@ if ($SkipGenerateProjectFiles) { $runArguments += '-SkipGenerateProjectFiles' }
 if ($NoClean) { $runArguments += '-NoClean' }
 if ($SkipUpstreamSync) { $runArguments += '-SkipUpstreamSync' }
 if ($SkipPushOrigin) { $runArguments += '-SkipPushOrigin' }
+if ($DirectEpic) { $runArguments += '-DirectEpic' }
 if ($NoDDC) { $runArguments += '-NoDDC' }
 if ($AllowMergeCommit) { $runArguments += '-AllowMergeCommit' }
 

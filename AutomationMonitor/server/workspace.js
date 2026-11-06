@@ -7,6 +7,7 @@ import path from "node:path";
 // Pure machine state (alert acks, deploy history) stays in monitor-state.json.
 
 export const DEFAULT_RUN_OPTIONS = {
+  directEpic: false,
   builtDirectory: "",
   at: "02:00",
   skipSetup: false,
